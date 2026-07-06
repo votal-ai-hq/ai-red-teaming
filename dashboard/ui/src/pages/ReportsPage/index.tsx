@@ -357,11 +357,25 @@ function FindingRow({ result }: { result: ReportResult }) {
   const requestText = result.payload
     || (conversations.length > 0 && conversations[0]?.role === "user" ? conversations[0].content : null)
     || (atk?.payload ? JSON.stringify(atk.payload, null, 2) : "");
+  // Resolve the agent's response text. Prefer the raw responseBody; otherwise
+  // fall back to the LAST non-user turn of the conversation — multi-turn attacks
+  // often end on the attacker's user turn, so the final assistant/tool turn is
+  // the real response. Empty => no text response (e.g. tool-call side-channel),
+  // handled with a placeholder below so the Response panel never vanishes.
+  const lastAgentTurn = [...conversations]
+    .reverse()
+    .find((s) => s.role && s.role !== "user" && (s.content ?? "").trim());
   const responseText = result.responseBody
     ? (typeof result.responseBody === "string" ? result.responseBody : JSON.stringify(result.responseBody, null, 2))
-    : (conversations.length > 1 && conversations[conversations.length - 1]?.role !== "user"
-        ? conversations[conversations.length - 1].content
-        : "");
+    : (lastAgentTurn?.content ?? "");
+  // Whether this row represents an actual HTTP interaction (so a Response panel
+  // belongs even when there's no text — vs. static/codebase findings).
+  const hasInteraction =
+    Boolean(requestText) ||
+    Boolean(responseText) ||
+    result.statusCode != null ||
+    result.responseTimeMs != null ||
+    conversations.length > 0;
 
   return (
     <>
@@ -415,7 +429,7 @@ function FindingRow({ result }: { result: ReportResult }) {
               </div>
 
               {/* ── Request & Response ── */}
-              {(requestText || responseText) && (
+              {hasInteraction && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {requestText && (
                     <div className="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/30 dark:bg-blue-950/10 p-3">
@@ -426,17 +440,24 @@ function FindingRow({ result }: { result: ReportResult }) {
                       <ExpandableText text={requestText} maxLines={6} />
                     </div>
                   )}
-                  {responseText && (
-                    <div className="rounded-lg border border-border bg-card p-3">
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
-                        Response
-                        {result.statusCode && <span className="font-normal ml-1">HTTP {result.statusCode}</span>}
-                        {result.responseTimeMs != null && <span className="font-normal ml-1">{result.responseTimeMs}ms</span>}
-                      </div>
-                      <ExpandableText text={responseText} maxLines={6} />
+                  {/* Always render the Response panel for an interaction — with a
+                      placeholder when the agent produced no text (e.g. the output
+                      was via tool calls / a side-channel). */}
+                  <div className="rounded-lg border border-border bg-card p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
+                      Response
+                      {result.statusCode && <span className="font-normal ml-1">HTTP {result.statusCode}</span>}
+                      {result.responseTimeMs != null && <span className="font-normal ml-1">{result.responseTimeMs}ms</span>}
                     </div>
-                  )}
+                    {responseText ? (
+                      <ExpandableText text={responseText} maxLines={6} />
+                    ) : (
+                      <p className="text-xs italic text-muted-foreground">
+                        No text response — the agent&rsquo;s output was via tool calls or a side-channel. See Findings below.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
