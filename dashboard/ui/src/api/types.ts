@@ -66,7 +66,9 @@ export interface ReportResult {
     severity_override?: string | null;
   };
   payload?: string;
-  responseBody?: string;
+  // The captured agent response. Often a string, but many targets return a
+  // structured body like { response, tool_calls, user, ... } or { error, ... }.
+  responseBody?: string | Record<string, unknown>;
   findings?: string[];
   steps?: ConversationStep[];
   conversation?: ConversationStep[];
