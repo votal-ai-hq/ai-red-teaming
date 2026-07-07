@@ -343,6 +343,34 @@ function ExpandableText({ text, maxLines = 4 }: { text: string; maxLines?: numbe
   );
 }
 
+/**
+ * Extract human-readable response text from a captured agent response body,
+ * which may be a plain string OR a structured object like
+ * `{ response, tool_calls, user, ... }` or `{ error, riskLevel, ... }`.
+ * Returns "" when there's nothing meaningful to show.
+ */
+function extractResponseText(rb: unknown): string {
+  if (rb == null) return "";
+  if (typeof rb === "string") return rb;
+  if (typeof rb !== "object") return String(rb);
+  const o = rb as Record<string, unknown>;
+  // The agent's textual answer (target responsePath is typically "response").
+  for (const k of ["response", "content", "text", "message", "answer", "output", "reply"]) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  // Guardrail-blocked / error bodies — surface the error message.
+  if (typeof o.error === "string" && o.error.trim()) return o.error;
+  // Nothing useful (e.g. empty object) — signal "no text".
+  if (Object.keys(o).length === 0) return "";
+  // Fallback: show the raw body so nothing is silently dropped.
+  try {
+    return JSON.stringify(rb, null, 2);
+  } catch {
+    return String(rb);
+  }
+}
+
 /* ─── Finding Row (rich expandable detail) ─── */
 
 function FindingRow({ result }: { result: ReportResult }) {
@@ -365,9 +393,10 @@ function FindingRow({ result }: { result: ReportResult }) {
   const lastAgentTurn = [...conversations]
     .reverse()
     .find((s) => s.role && s.role !== "user" && (s.content ?? "").trim());
-  const responseText = result.responseBody
-    ? (typeof result.responseBody === "string" ? result.responseBody : JSON.stringify(result.responseBody, null, 2))
-    : (lastAgentTurn?.content ?? "");
+  // responseBody may be a string or a structured object ({ response, ... });
+  // extract the agent's text either way, then fall back to the last agent turn.
+  const responseText =
+    extractResponseText(result.responseBody) || (lastAgentTurn?.content ?? "");
   // Whether this row represents an actual HTTP interaction (so a Response panel
   // belongs even when there's no text — vs. static/codebase findings).
   const hasInteraction =
