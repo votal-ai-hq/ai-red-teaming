@@ -670,24 +670,37 @@ export async function runRedTeam(
     if (signal?.aborted) throw new Error("Run cancelled");
   };
 
-  // For MCP targets, only "_mcpOperation" payloads can actually execute against
-  // the server. Chat-shaped attacks (e.g. from LLM/strategy/multi-turn generation)
-  // would be rejected with HTTP 400 and then scored a FALSE "Defended", inflating
-  // the target's security. Drop them here so results reflect real MCP calls only.
+  // Populated after codebase/target analysis; used to gate MCP attacks by the
+  // server's discovered capabilities (see keepExecutableForTarget below).
+  let mcpAnalysis: CodebaseAnalysis | undefined;
+
+  // For MCP targets, drop attacks that can't actually execute against the server,
+  // so results reflect real MCP calls instead of false "Defended"/"Error" noise:
+  //  1. no "_mcpOperation" — a chat-shaped payload (LLM/strategy/multi-turn) that
+  //     the adapter rejects with HTTP 400 → falsely scored "Defended".
+  //  2. an operation the server doesn't expose (e.g. prompts/get or resources/read
+  //     on a tools-only server) → JSON-RPC -32601 "Method not found".
   const keepExecutableForTarget = (
     list: Attack[],
     round: number,
   ): Attack[] => {
     if ((config.target.type ?? "http_agent") !== "mcp") return list;
-    const kept = list.filter(
-      (a) =>
-        typeof (a.payload as Record<string, unknown>)?._mcpOperation === "string",
-    );
+    const surface = mcpAnalysis?.mcpSurface;
+    const caps = surface?.capabilities ?? [];
+    const hasPrompts = caps.includes("prompts") || (surface?.prompts?.length ?? 0) > 0;
+    const hasResources = caps.includes("resources") || (surface?.resources?.length ?? 0) > 0;
+    const kept = list.filter((a) => {
+      const op = (a.payload as Record<string, unknown>)?._mcpOperation;
+      if (typeof op !== "string") return false;
+      if (op === "prompts/get" && !hasPrompts) return false;
+      if (op === "resources/read" && !hasResources) return false;
+      return true;
+    });
     const dropped = list.length - kept.length;
     if (dropped > 0) {
       log(
         "attacks",
-        `MCP target: skipped ${dropped} non-MCP attack(s) lacking "_mcpOperation" (a chat-shaped payload can't call an MCP tool, so it isn't a real defense)`,
+        `MCP target: skipped ${dropped} attack(s) that can't run here (no "_mcpOperation", or the server doesn't expose prompts/resources)`,
         { round },
       );
     }
@@ -811,6 +824,7 @@ export async function runRedTeam(
   await enrichAnalysisWithTargetSurface(config, analysis, (msg) =>
     log("analyze", msg),
   );
+  mcpAnalysis = analysis; // expose discovered MCP surface to the attack filter
   log(
     "analyze",
     `Found ${analysis.tools.length} tools, ${analysis.roles.length} roles`,
