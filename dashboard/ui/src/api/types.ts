@@ -285,6 +285,20 @@ export interface ReferenceData {
   strategies: StrategyInfo[];
   categoryCompliance: Record<string, string[]>;
   frameworks?: { name: string; items: unknown[] }[];
+  /** Whether this instance permits MCP stdio targets (self-hosted only). */
+  allowMcpStdio?: boolean;
+}
+
+export interface McpDiscoverResult {
+  ok: boolean;
+  error?: string;
+  transport?: string;
+  serverInfo?: { name: string; version?: string } | null;
+  protocolVersion?: string | null;
+  capabilities?: string[];
+  tools?: { name: string; description: string }[];
+  prompts?: { name: string; description: string }[];
+  resources?: { name: string; uri: string }[];
 }
 
 export interface StrategyInfo {

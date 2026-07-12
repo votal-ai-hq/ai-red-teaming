@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { createRun } from "@/api/runs";
-import { getReference } from "@/api/reference";
+import { getReference, discoverMcp } from "@/api/reference";
 import { apiFetch } from "@/api/client";
-import type { ReferenceData, StrategyInfo } from "@/api/types";
+import type { ReferenceData, StrategyInfo, McpDiscoverResult } from "@/api/types";
 import {
   Card,
   CardContent,
@@ -216,6 +216,23 @@ export default function NewScanPage() {
   const [authEndpoint, setAuthEndpoint] = useState("");
   const [applicationDetails, setApplicationDetails] = useState("");
 
+  // ── MCP target (when targetType === "mcp") ──
+  const [mcpTransport, setMcpTransport] = useState<"streamable_http" | "stdio">("streamable_http");
+  const [mcpUrl, setMcpUrl] = useState("");
+  const [mcpCommand, setMcpCommand] = useState("");
+  const [mcpArgs, setMcpArgs] = useState(""); // whitespace-separated
+  const [mcpHeaders, setMcpHeaders] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
+  const [mcpAllowlist, setMcpAllowlist] = useState(""); // comma/newline-separated tool names
+  const [mcpDenylist, setMcpDenylist] = useState("");
+  const [mcpDiscovering, setMcpDiscovering] = useState(false);
+  const [mcpDiscovery, setMcpDiscovery] = useState<McpDiscoverResult | null>(null);
+  const [mcpDiscoverError, setMcpDiscoverError] = useState<string | null>(null);
+
+  // ── WebSocket target (when targetType === "websocket_agent") ──
+  const [wsPath, setWsPath] = useState("/ws/chat");
+  const [wsToken, setWsToken] = useState("");
+  const [wsSubprotocols, setWsSubprotocols] = useState(""); // comma-separated
+
   // ── Auth ──
   const [authMethods, setAuthMethods] = useState<string[]>(["api_key"]);
   const [apiKeys, setApiKeys] = useState<{ role: string; key: string }[]>([
@@ -291,6 +308,13 @@ export default function NewScanPage() {
       .finally(() => setRefLoading(false));
   }, []);
 
+  // If this instance disallows MCP stdio, never leave the form stuck on it.
+  useEffect(() => {
+    if (ref && !ref.allowMcpStdio && mcpTransport === "stdio") {
+      setMcpTransport("streamable_http");
+    }
+  }, [ref, mcpTransport]);
+
   // Pre-fill form from "Edit & Rerun" config passed via router state
   useEffect(() => {
     if (!prefillConfig) return;
@@ -307,6 +331,31 @@ export default function NewScanPage() {
     if (target?.authEndpoint) setAuthEndpoint(String(target.authEndpoint));
     if (target?.applicationDetails) setApplicationDetails(String(target.applicationDetails));
     if (target?.type) setTargetType(target.type as "http_agent" | "mcp" | "websocket_agent");
+
+    // MCP target
+    const mcp = target?.mcp as Record<string, unknown> | undefined;
+    if (mcp) {
+      if (mcp.transport === "stdio" || mcp.transport === "streamable_http") {
+        setMcpTransport(mcp.transport);
+      }
+      if (mcp.url) setMcpUrl(String(mcp.url));
+      if (mcp.command) setMcpCommand(String(mcp.command));
+      if (Array.isArray(mcp.args)) setMcpArgs((mcp.args as string[]).join(" "));
+      if (mcp.headers && typeof mcp.headers === "object") {
+        const hs = Object.entries(mcp.headers as Record<string, string>).map(([key, value]) => ({ key, value }));
+        if (hs.length > 0) setMcpHeaders(hs);
+      }
+      if (Array.isArray(mcp.allowlistedTools)) setMcpAllowlist((mcp.allowlistedTools as string[]).join(", "));
+      if (Array.isArray(mcp.denylistedTools)) setMcpDenylist((mcp.denylistedTools as string[]).join(", "));
+    }
+
+    // WebSocket target
+    const ws = target?.websocket as Record<string, unknown> | undefined;
+    if (ws) {
+      if (ws.path) setWsPath(String(ws.path));
+      if (ws.token) setWsToken(String(ws.token));
+      if (Array.isArray(ws.subprotocols)) setWsSubprotocols((ws.subprotocols as string[]).join(", "));
+    }
 
     // Auth
     if (auth?.methods && Array.isArray(auth.methods)) setAuthMethods(auth.methods as string[]);
@@ -417,14 +466,60 @@ export default function NewScanPage() {
       if (role && key) apiKeysObj[role] = key;
     });
 
-    const config: Record<string, unknown> = {
-      target: {
-        type: targetType,
+    const splitList = (s: string) =>
+      s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+
+    // Build the target block per target type.
+    let target: Record<string, unknown>;
+    if (targetType === "mcp") {
+      const headersObj: Record<string, string> = {};
+      mcpHeaders.forEach(({ key, value }) => {
+        if (key && value) headersObj[key] = value;
+      });
+      const allow = splitList(mcpAllowlist);
+      const deny = splitList(mcpDenylist);
+      target = {
+        type: "mcp",
+        applicationDetails: applicationDetails || "",
+        mcp: {
+          transport: mcpTransport,
+          ...(mcpTransport === "streamable_http"
+            ? {
+                url: mcpUrl,
+                ...(Object.keys(headersObj).length > 0 ? { headers: headersObj } : {}),
+              }
+            : {
+                command: mcpCommand,
+                ...(mcpArgs.trim() ? { args: mcpArgs.trim().split(/\s+/) } : {}),
+              }),
+          ...(allow.length > 0 ? { allowlistedTools: allow } : {}),
+          ...(deny.length > 0 ? { denylistedTools: deny } : {}),
+        },
+      };
+    } else if (targetType === "websocket_agent") {
+      const subs = splitList(wsSubprotocols);
+      target = {
+        type: "websocket_agent",
+        baseUrl,
+        applicationDetails: applicationDetails || "",
+        websocket: {
+          path: wsPath,
+          ...(subs.length > 0 ? { subprotocols: subs } : {}),
+          ...(wsToken ? { token: wsToken } : {}),
+        },
+      };
+    } else {
+      target = {
+        type: "http_agent",
         baseUrl,
         agentEndpoint,
         authEndpoint: authEndpoint || "",
         applicationDetails: applicationDetails || "",
-      },
+      };
+    }
+
+    const config: Record<string, unknown> = {
+      target,
       auth: {
         methods: authMethods,
         ...(Object.keys(apiKeysObj).length > 0 ? { apiKeys: apiKeysObj } : {}),
@@ -482,14 +577,28 @@ export default function NewScanPage() {
     return config;
   };
 
+  // Whether the minimum required target field for the chosen type is filled.
+  const targetReady =
+    (showJsonOverride && jsonConfig.trim().length > 0) ||
+    (targetType === "mcp"
+      ? mcpTransport === "streamable_http"
+        ? mcpUrl.trim().length > 0
+        : mcpCommand.trim().length > 0
+      : baseUrl.trim().length > 0);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    // baseUrl is required unless using JSON override with a target already set
-    if (!baseUrl.trim() && !(showJsonOverride && jsonConfig.trim())) {
-      setError("Target base URL is required.");
+    if (!targetReady) {
+      setError(
+        targetType === "mcp"
+          ? mcpTransport === "streamable_http"
+            ? "MCP server URL is required."
+            : "MCP command is required."
+          : "Target base URL is required.",
+      );
       return;
     }
 
@@ -508,6 +617,39 @@ export default function NewScanPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Connect to the MCP target and list its tools/prompts/resources.
+  const handleDiscover = async () => {
+    setMcpDiscoverError(null);
+    setMcpDiscovery(null);
+    const missing =
+      mcpTransport === "streamable_http" ? !mcpUrl.trim() : !mcpCommand.trim();
+    if (missing) {
+      setMcpDiscoverError(
+        mcpTransport === "streamable_http"
+          ? "Enter the MCP server URL first."
+          : "Enter the MCP command first.",
+      );
+      return;
+    }
+    setMcpDiscovering(true);
+    try {
+      const result = await discoverMcp(buildConfig());
+      if (result.ok) setMcpDiscovery(result);
+      else setMcpDiscoverError(result.error || "Could not connect to the MCP server.");
+    } catch (err) {
+      setMcpDiscoverError(err instanceof Error ? err.message : "Discovery failed.");
+    } finally {
+      setMcpDiscovering(false);
+    }
+  };
+
+  // Append a discovered tool name to the allowlist (dedup).
+  const addToAllowlist = (tool: string) => {
+    const current = mcpAllowlist.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    if (current.includes(tool)) return;
+    setMcpAllowlist([...current, tool].join(", "));
   };
 
   if (refLoading) {
@@ -640,41 +782,289 @@ export default function NewScanPage() {
                 </div>
               </FieldRow>
 
-              {/* Base URL */}
-              <FieldRow label="Base URL *" hint="The root URL of your target application">
-                <input
-                  type="url"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com"
-                  required
-                  className={inputCls}
-                />
-              </FieldRow>
+              {/* ── HTTP Agent fields ── */}
+              {targetType === "http_agent" && (
+                <>
+                  <FieldRow label="Base URL *" hint="The root URL of your target application">
+                    <input
+                      type="url"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder="https://api.example.com"
+                      className={inputCls}
+                    />
+                  </FieldRow>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldRow label="Agent Endpoint" hint="Path to the agent/chat endpoint">
+                      <input
+                        type="text"
+                        value={agentEndpoint}
+                        onChange={(e) => setAgentEndpoint(e.target.value)}
+                        placeholder="/api/agent"
+                        className={inputCls}
+                      />
+                    </FieldRow>
+                    <FieldRow label="Auth Endpoint" hint="Login/token endpoint (if any)">
+                      <input
+                        type="text"
+                        value={authEndpoint}
+                        onChange={(e) => setAuthEndpoint(e.target.value)}
+                        placeholder="/api/auth/login"
+                        className={inputCls}
+                      />
+                    </FieldRow>
+                  </div>
+                </>
+              )}
 
-              <div className="grid grid-cols-2 gap-4">
-                {/* Agent Endpoint */}
-                <FieldRow label="Agent Endpoint" hint="Path to the agent/chat endpoint">
-                  <input
-                    type="text"
-                    value={agentEndpoint}
-                    onChange={(e) => setAgentEndpoint(e.target.value)}
-                    placeholder="/api/agent"
-                    className={inputCls}
-                  />
-                </FieldRow>
+              {/* ── MCP fields ── */}
+              {targetType === "mcp" && (
+                <div className="space-y-4">
+                  <FieldRow label="Transport" hint="How the scanner connects to your MCP server">
+                    <div className="flex gap-2">
+                      {(
+                        [
+                          { value: "streamable_http", label: "Streamable HTTP", desc: "Remote server (URL)" },
+                          { value: "stdio", label: "Stdio", desc: "Local process (command)" },
+                        ] as const
+                      )
+                        // Stdio spawns a local process on the server, so it's only
+                        // offered on instances that explicitly enable it.
+                        .filter((t) => t.value !== "stdio" || ref?.allowMcpStdio)
+                        .map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() => setMcpTransport(t.value)}
+                            className={`flex-1 px-3 py-2 rounded-lg text-left border transition-all ${
+                              mcpTransport === t.value
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-muted-foreground/30"
+                            }`}
+                          >
+                            <div className="text-xs font-semibold text-foreground">{t.label}</div>
+                            <div className="text-[11px] text-muted-foreground">{t.desc}</div>
+                          </button>
+                        ))}
+                    </div>
+                    {!ref?.allowMcpStdio && (
+                      <p className="text-[11px] text-muted-foreground mt-1.5">
+                        Stdio (local process) targets are disabled on this instance. Connect a remote MCP server over Streamable HTTP.
+                      </p>
+                    )}
+                  </FieldRow>
 
-                {/* Auth Endpoint */}
-                <FieldRow label="Auth Endpoint" hint="Login/token endpoint (if any)">
-                  <input
-                    type="text"
-                    value={authEndpoint}
-                    onChange={(e) => setAuthEndpoint(e.target.value)}
-                    placeholder="/api/auth/login"
-                    className={inputCls}
-                  />
-                </FieldRow>
-              </div>
+                  {mcpTransport === "streamable_http" ? (
+                    <>
+                      <FieldRow label="MCP Server URL *" hint="The MCP endpoint (streamable HTTP)">
+                        <input
+                          type="url"
+                          value={mcpUrl}
+                          onChange={(e) => setMcpUrl(e.target.value)}
+                          placeholder="https://your-mcp-server.example.com/api/mcp"
+                          className={inputCls}
+                        />
+                      </FieldRow>
+                      <FieldRow label="Headers" hint="Auth headers sent to the MCP server (e.g. x-api-key)">
+                        <div className="space-y-2">
+                          {mcpHeaders.map((h, i) => (
+                            <div key={i} className="flex gap-2">
+                              <input
+                                type="text"
+                                value={h.key}
+                                onChange={(e) => {
+                                  const copy = [...mcpHeaders];
+                                  copy[i] = { ...h, key: e.target.value };
+                                  setMcpHeaders(copy);
+                                }}
+                                placeholder="Header name (e.g. x-api-key)"
+                                className={`${inputCls} w-1/3`}
+                              />
+                              <input
+                                type="text"
+                                value={h.value}
+                                onChange={(e) => {
+                                  const copy = [...mcpHeaders];
+                                  copy[i] = { ...h, value: e.target.value };
+                                  setMcpHeaders(copy);
+                                }}
+                                placeholder="Value"
+                                className={`${inputCls} flex-1`}
+                              />
+                              {mcpHeaders.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setMcpHeaders(mcpHeaders.filter((_, j) => j !== i))}
+                                  className="text-muted-foreground hover:text-red-500 px-1"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setMcpHeaders([...mcpHeaders, { key: "", value: "" }])}
+                            className="text-xs font-medium text-primary hover:text-primary/80"
+                          >
+                            + Add header
+                          </button>
+                        </div>
+                      </FieldRow>
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <FieldRow label="Command *" hint="Executable that starts the MCP server">
+                        <input
+                          type="text"
+                          value={mcpCommand}
+                          onChange={(e) => setMcpCommand(e.target.value)}
+                          placeholder="npx"
+                          className={inputCls}
+                        />
+                      </FieldRow>
+                      <FieldRow label="Arguments" hint="Space-separated args passed to the command">
+                        <input
+                          type="text"
+                          value={mcpArgs}
+                          onChange={(e) => setMcpArgs(e.target.value)}
+                          placeholder="-y @modelcontextprotocol/server-filesystem /data"
+                          className={inputCls}
+                        />
+                      </FieldRow>
+                    </div>
+                  )}
+
+                  {/* Test connection & discover tools */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handleDiscover}
+                      disabled={mcpDiscovering}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border rounded-lg hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+                    >
+                      {mcpDiscovering ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Globe className="w-3.5 h-3.5" />
+                      )}
+                      {mcpDiscovering ? "Connecting..." : "Test connection & discover tools"}
+                    </button>
+
+                    {mcpDiscoverError && (
+                      <div className="mt-2 flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg text-xs text-red-700 dark:text-red-400">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>{mcpDiscoverError}</span>
+                      </div>
+                    )}
+
+                    {mcpDiscovery?.ok && (
+                      <div className="mt-2 p-3 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 rounded-lg">
+                        <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          Connected{mcpDiscovery.serverInfo?.name ? ` to ${mcpDiscovery.serverInfo.name}` : ""}
+                          {mcpDiscovery.serverInfo?.version ? ` v${mcpDiscovery.serverInfo.version}` : ""}
+                          <span className="text-muted-foreground font-normal">
+                            · {mcpDiscovery.tools?.length ?? 0} tools · {mcpDiscovery.prompts?.length ?? 0} prompts · {mcpDiscovery.resources?.length ?? 0} resources
+                          </span>
+                        </div>
+                        {(mcpDiscovery.tools?.length ?? 0) > 0 ? (
+                          <>
+                            <p className="text-[11px] text-muted-foreground mb-1.5">
+                              Discovered tools (click to add to the allowlist):
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {mcpDiscovery.tools!.map((t) => (
+                                <button
+                                  key={t.name}
+                                  type="button"
+                                  onClick={() => addToAllowlist(t.name)}
+                                  title={t.description || t.name}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border border-border bg-card hover:border-primary hover:text-primary transition-colors"
+                                >
+                                  {t.name}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">
+                            The server exposed no tools.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldRow label="Tool Allowlist" hint="Only test these tools (comma/newline separated). Empty = all.">
+                      <textarea
+                        value={mcpAllowlist}
+                        onChange={(e) => setMcpAllowlist(e.target.value)}
+                        placeholder="read_file, search_docs"
+                        rows={2}
+                        className={`${inputCls} resize-y`}
+                      />
+                    </FieldRow>
+                    <FieldRow label="Tool Denylist" hint="Never test these tools (keep destructive ops out of scope).">
+                      <textarea
+                        value={mcpDenylist}
+                        onChange={(e) => setMcpDenylist(e.target.value)}
+                        placeholder="delete_all, wire_transfer"
+                        rows={2}
+                        className={`${inputCls} resize-y`}
+                      />
+                    </FieldRow>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    The scanner connects, auto-discovers the server&rsquo;s tools, prompts, and resources, then runs MCP-specific attacks (tool misuse, cross-tenant access, path traversal, SSRF, indirect prompt injection) against them.
+                  </p>
+                </div>
+              )}
+
+              {/* ── WebSocket fields ── */}
+              {targetType === "websocket_agent" && (
+                <>
+                  <FieldRow label="Base URL *" hint="Host of the target (the WebSocket connects on this host)">
+                    <input
+                      type="url"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder="https://api.example.com"
+                      className={inputCls}
+                    />
+                  </FieldRow>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FieldRow label="WebSocket Path *" hint="Path for the chat socket on the same host">
+                      <input
+                        type="text"
+                        value={wsPath}
+                        onChange={(e) => setWsPath(e.target.value)}
+                        placeholder="/ws/chat"
+                        className={inputCls}
+                      />
+                    </FieldRow>
+                    <FieldRow label="Subprotocols" hint="Optional, comma-separated">
+                      <input
+                        type="text"
+                        value={wsSubprotocols}
+                        onChange={(e) => setWsSubprotocols(e.target.value)}
+                        placeholder="graphql-ws"
+                        className={inputCls}
+                      />
+                    </FieldRow>
+                  </div>
+                  <FieldRow label="Token" hint="Optional auth token appended as a query param">
+                    <input
+                      type="text"
+                      value={wsToken}
+                      onChange={(e) => setWsToken(e.target.value)}
+                      placeholder="Bearer/session token (if required)"
+                      className={inputCls}
+                    />
+                  </FieldRow>
+                </>
+              )}
 
               {/* Application Details */}
               <FieldRow
@@ -1353,7 +1743,7 @@ export default function NewScanPage() {
         {/* ═══ Submit ═══ */}
         <button
           type="submit"
-          disabled={submitting || (!baseUrl.trim() && !(showJsonOverride && jsonConfig.trim()))}
+          disabled={submitting || !targetReady}
           className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.99]"
         >
           {submitting ? (
