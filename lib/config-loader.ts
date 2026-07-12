@@ -83,6 +83,28 @@ function validateAndNormalizeConfig(config: Config): Config {
       "Warning: no auth credentials or apiKeys provided — scanning the target as an unauthenticated/public endpoint",
     );
   }
+
+  // Request/response schema defaults. The response analyzer reads these paths on
+  // every result (config.responseSchema.toolCallsPath, etc.), so a config that
+  // omits them — e.g. a minimal MCP config — must not crash at analysis time.
+  config.requestSchema = Object.assign(
+    {
+      messageField: "message",
+      roleField: "role",
+      apiKeyField: "api_key",
+      guardrailModeField: "guardrail_mode",
+    },
+    config.requestSchema ?? {},
+  );
+  config.responseSchema = Object.assign(
+    {
+      responsePath: "response",
+      toolCallsPath: "tool_calls",
+      userInfoPath: "user",
+      guardrailsPath: "guardrails",
+    },
+    config.responseSchema ?? {},
+  );
   if (!config.sensitivePatterns?.length) {
     config.sensitivePatterns = [];
     if (config.attackConfig.enableDiscovery) {

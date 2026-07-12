@@ -262,6 +262,20 @@ describe("loadConfig", () => {
     expect(config.auth.methods).toEqual([]);
   });
 
+  it("defaults request/response schema when omitted (e.g. a minimal MCP config)", () => {
+    const cfg = makeValidConfig();
+    delete cfg.requestSchema;
+    delete cfg.responseSchema;
+    const path = writeTestConfig(tmpDir, cfg);
+    const config = loadConfig(path);
+    // The response analyzer reads these on every result — they must exist.
+    expect(config.responseSchema.toolCallsPath).toBe("tool_calls");
+    expect(config.responseSchema.responsePath).toBe("response");
+    expect(config.responseSchema.userInfoPath).toBe("user");
+    expect(config.responseSchema.guardrailsPath).toBe("guardrails");
+    expect(config.requestSchema.messageField).toBe("message");
+  });
+
   it("throws on non-existent config file", () => {
     expect(() => loadConfig("/nonexistent/path/config.json")).toThrow();
   });
