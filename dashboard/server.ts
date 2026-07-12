@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { loadConfig } from "../lib/config-loader.js";
 import { loadConfigFromObject } from "../lib/config-loader.js";
 import { discoverMcpSurface } from "../lib/mcp/discovery.js";
+import { describeTarget } from "../lib/target-adapter.js";
 import { loadEnvFile } from "../lib/env-loader.js";
 import {
   getJudgeProvider,
@@ -769,7 +770,7 @@ async function startJob(job: Job): Promise<void> {
               };
             });
             const report = generateReport(
-              job.config.target.baseUrl + job.config.target.agentEndpoint,
+              describeTarget(job.config),
               [{ round: 1, results: attackResults }],
             );
             job.report = report;
@@ -873,7 +874,7 @@ async function logRunComplete(job: Job): Promise<void> {
         attacksExecuted: summary?.totalAttacks ?? resultEvents.length,
         vulnerabilities: summary?.passed ?? null,
         score: summary?.score ?? null,
-        targetUrl: job.config.target.baseUrl,
+        targetUrl: describeTarget(job.config),
       },
     );
   } catch {
@@ -915,7 +916,7 @@ function enqueueJob(config: Config, ctx?: RequestContext | null): Job {
         job.userId || null,
         "queued",
         JSON.stringify(config),
-        config.target.baseUrl,
+        describeTarget(config),
         job.startedAt,
       ],
     ).catch((err: unknown) => console.error("Failed to persist run:", err));
@@ -1112,7 +1113,7 @@ const server = createServer(
         const job = enqueueJob(config, ctx);
         if (ctx) {
           await logAudit(ctx, "run.start", "run", job.id, {
-            targetUrl: config.target.baseUrl,
+            targetUrl: describeTarget(config),
             startedAt: job.startedAt,
             estimatedTotal: job.estimatedTotal,
           });
@@ -1123,7 +1124,7 @@ const server = createServer(
             runId: job.id,
             status: job.status,
             startedAt: job.startedAt,
-            targetUrl: job.config.target.baseUrl,
+            targetUrl: describeTarget(job.config),
             estimatedTotal: job.estimatedTotal,
             message:
               job.status === "running"
@@ -1229,7 +1230,7 @@ const server = createServer(
             status: effectiveStatus,
             startedAt: job.startedAt,
             finishedAt: job.finishedAt,
-            targetUrl: job.config.target.baseUrl,
+            targetUrl: describeTarget(job.config),
             error: job._cancelled ? "Cancelled by user" : job.error,
             progressTotal: job.progress.length,
             progress: slimProgressForTransit(job.progress.slice(since)),
@@ -1412,7 +1413,7 @@ const server = createServer(
             status: getJobStatus(j),
             startedAt: j.startedAt,
             finishedAt: j.finishedAt,
-            targetUrl: j.config.target.baseUrl,
+            targetUrl: describeTarget(j.config),
             error: j._cancelled ? "Cancelled by user" : j.error,
             progressCount: j.progress.length,
             reportFile: j.reportFile,
