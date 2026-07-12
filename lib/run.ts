@@ -670,6 +670,30 @@ export async function runRedTeam(
     if (signal?.aborted) throw new Error("Run cancelled");
   };
 
+  // For MCP targets, only "_mcpOperation" payloads can actually execute against
+  // the server. Chat-shaped attacks (e.g. from LLM/strategy/multi-turn generation)
+  // would be rejected with HTTP 400 and then scored a FALSE "Defended", inflating
+  // the target's security. Drop them here so results reflect real MCP calls only.
+  const keepExecutableForTarget = (
+    list: Attack[],
+    round: number,
+  ): Attack[] => {
+    if ((config.target.type ?? "http_agent") !== "mcp") return list;
+    const kept = list.filter(
+      (a) =>
+        typeof (a.payload as Record<string, unknown>)?._mcpOperation === "string",
+    );
+    const dropped = list.length - kept.length;
+    if (dropped > 0) {
+      log(
+        "attacks",
+        `MCP target: skipped ${dropped} non-MCP attack(s) lacking "_mcpOperation" (a chat-shaped payload can't call an MCP tool, so it isn't a real defense)`,
+        { round },
+      );
+    }
+    return kept;
+  };
+
   const emitResult = (result: AttackResult, extra?: Partial<RunProgress>) => {
     // Extract payload message
     const payload =
@@ -982,11 +1006,9 @@ export async function runRedTeam(
       console.log = origLog;
     }
     checkAbort();
-    const attacks = mergeCustomAttacksForRound(
-      config,
+    const attacks = keepExecutableForTarget(
+      mergeCustomAttacksForRound(config, round, planned, customAttacks),
       round,
-      planned,
-      customAttacks,
     );
     log("attacks", `Round ${round}: planned ${attacks.length} attacks`, {
       round,
@@ -1286,10 +1308,8 @@ export async function runRedTeam(
       log("refine", `Refining ${roundPartials.length} PARTIAL results...`, {
         round,
       });
-      const refinedAttacks = await refinePartialAttacks(
-        config,
-        analysis,
-        roundResults,
+      const refinedAttacks = keepExecutableForTarget(
+        await refinePartialAttacks(config, analysis, roundResults, round),
         round,
       );
 
