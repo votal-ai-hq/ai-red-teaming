@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { createRun } from "@/api/runs";
-import { getReference } from "@/api/reference";
+import { getReference, discoverMcp } from "@/api/reference";
 import { apiFetch } from "@/api/client";
-import type { ReferenceData, StrategyInfo } from "@/api/types";
+import type { ReferenceData, StrategyInfo, McpDiscoverResult } from "@/api/types";
 import {
   Card,
   CardContent,
@@ -224,6 +224,9 @@ export default function NewScanPage() {
   const [mcpHeaders, setMcpHeaders] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [mcpAllowlist, setMcpAllowlist] = useState(""); // comma/newline-separated tool names
   const [mcpDenylist, setMcpDenylist] = useState("");
+  const [mcpDiscovering, setMcpDiscovering] = useState(false);
+  const [mcpDiscovery, setMcpDiscovery] = useState<McpDiscoverResult | null>(null);
+  const [mcpDiscoverError, setMcpDiscoverError] = useState<string | null>(null);
 
   // ── WebSocket target (when targetType === "websocket_agent") ──
   const [wsPath, setWsPath] = useState("/ws/chat");
@@ -304,6 +307,13 @@ export default function NewScanPage() {
       .catch(() => setError("Failed to load reference data."))
       .finally(() => setRefLoading(false));
   }, []);
+
+  // If this instance disallows MCP stdio, never leave the form stuck on it.
+  useEffect(() => {
+    if (ref && !ref.allowMcpStdio && mcpTransport === "stdio") {
+      setMcpTransport("streamable_http");
+    }
+  }, [ref, mcpTransport]);
 
   // Pre-fill form from "Edit & Rerun" config passed via router state
   useEffect(() => {
@@ -609,6 +619,39 @@ export default function NewScanPage() {
     }
   };
 
+  // Connect to the MCP target and list its tools/prompts/resources.
+  const handleDiscover = async () => {
+    setMcpDiscoverError(null);
+    setMcpDiscovery(null);
+    const missing =
+      mcpTransport === "streamable_http" ? !mcpUrl.trim() : !mcpCommand.trim();
+    if (missing) {
+      setMcpDiscoverError(
+        mcpTransport === "streamable_http"
+          ? "Enter the MCP server URL first."
+          : "Enter the MCP command first.",
+      );
+      return;
+    }
+    setMcpDiscovering(true);
+    try {
+      const result = await discoverMcp(buildConfig());
+      if (result.ok) setMcpDiscovery(result);
+      else setMcpDiscoverError(result.error || "Could not connect to the MCP server.");
+    } catch (err) {
+      setMcpDiscoverError(err instanceof Error ? err.message : "Discovery failed.");
+    } finally {
+      setMcpDiscovering(false);
+    }
+  };
+
+  // Append a discovered tool name to the allowlist (dedup).
+  const addToAllowlist = (tool: string) => {
+    const current = mcpAllowlist.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    if (current.includes(tool)) return;
+    setMcpAllowlist([...current, tool].join(", "));
+  };
+
   if (refLoading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -784,22 +827,31 @@ export default function NewScanPage() {
                           { value: "streamable_http", label: "Streamable HTTP", desc: "Remote server (URL)" },
                           { value: "stdio", label: "Stdio", desc: "Local process (command)" },
                         ] as const
-                      ).map((t) => (
-                        <button
-                          key={t.value}
-                          type="button"
-                          onClick={() => setMcpTransport(t.value)}
-                          className={`flex-1 px-3 py-2 rounded-lg text-left border transition-all ${
-                            mcpTransport === t.value
-                              ? "border-primary bg-primary/5"
-                              : "border-border hover:border-muted-foreground/30"
-                          }`}
-                        >
-                          <div className="text-xs font-semibold text-foreground">{t.label}</div>
-                          <div className="text-[11px] text-muted-foreground">{t.desc}</div>
-                        </button>
-                      ))}
+                      )
+                        // Stdio spawns a local process on the server, so it's only
+                        // offered on instances that explicitly enable it.
+                        .filter((t) => t.value !== "stdio" || ref?.allowMcpStdio)
+                        .map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() => setMcpTransport(t.value)}
+                            className={`flex-1 px-3 py-2 rounded-lg text-left border transition-all ${
+                              mcpTransport === t.value
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-muted-foreground/30"
+                            }`}
+                          >
+                            <div className="text-xs font-semibold text-foreground">{t.label}</div>
+                            <div className="text-[11px] text-muted-foreground">{t.desc}</div>
+                          </button>
+                        ))}
                     </div>
+                    {!ref?.allowMcpStdio && (
+                      <p className="text-[11px] text-muted-foreground mt-1.5">
+                        Stdio (local process) targets are disabled on this instance. Connect a remote MCP server over Streamable HTTP.
+                      </p>
+                    )}
                   </FieldRow>
 
                   {mcpTransport === "streamable_http" ? (
@@ -882,6 +934,67 @@ export default function NewScanPage() {
                       </FieldRow>
                     </div>
                   )}
+
+                  {/* Test connection & discover tools */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handleDiscover}
+                      disabled={mcpDiscovering}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border rounded-lg hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+                    >
+                      {mcpDiscovering ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Globe className="w-3.5 h-3.5" />
+                      )}
+                      {mcpDiscovering ? "Connecting..." : "Test connection & discover tools"}
+                    </button>
+
+                    {mcpDiscoverError && (
+                      <div className="mt-2 flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg text-xs text-red-700 dark:text-red-400">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>{mcpDiscoverError}</span>
+                      </div>
+                    )}
+
+                    {mcpDiscovery?.ok && (
+                      <div className="mt-2 p-3 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 rounded-lg">
+                        <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          Connected{mcpDiscovery.serverInfo?.name ? ` to ${mcpDiscovery.serverInfo.name}` : ""}
+                          {mcpDiscovery.serverInfo?.version ? ` v${mcpDiscovery.serverInfo.version}` : ""}
+                          <span className="text-muted-foreground font-normal">
+                            · {mcpDiscovery.tools?.length ?? 0} tools · {mcpDiscovery.prompts?.length ?? 0} prompts · {mcpDiscovery.resources?.length ?? 0} resources
+                          </span>
+                        </div>
+                        {(mcpDiscovery.tools?.length ?? 0) > 0 ? (
+                          <>
+                            <p className="text-[11px] text-muted-foreground mb-1.5">
+                              Discovered tools (click to add to the allowlist):
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {mcpDiscovery.tools!.map((t) => (
+                                <button
+                                  key={t.name}
+                                  type="button"
+                                  onClick={() => addToAllowlist(t.name)}
+                                  title={t.description || t.name}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border border-border bg-card hover:border-primary hover:text-primary transition-colors"
+                                >
+                                  {t.name}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">
+                            The server exposed no tools.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <FieldRow label="Tool Allowlist" hint="Only test these tools (comma/newline separated). Empty = all.">

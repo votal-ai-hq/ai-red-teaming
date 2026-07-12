@@ -1,7 +1,7 @@
 import { bootstrapProxy } from "../lib/proxy-bootstrap.js";
 bootstrapProxy();
 
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   readFileSync,
   readdirSync,
@@ -17,6 +17,7 @@ import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { loadConfig } from "../lib/config-loader.js";
 import { loadConfigFromObject } from "../lib/config-loader.js";
+import { discoverMcpSurface } from "../lib/mcp/discovery.js";
 import { loadEnvFile } from "../lib/env-loader.js";
 import {
   getJudgeProvider,
@@ -472,6 +473,37 @@ function getJobStatus(job: Job): Job["status"] {
 const jobs = new Map<string, Job>();
 let activeRuns = 0;
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_RUNS || "100", 10);
+
+/**
+ * MCP "stdio" transport spawns an arbitrary local process on THIS server, so it
+ * must never be reachable by untrusted users on a shared/hosted instance.
+ * It stays disabled unless a deployment explicitly opts in (self-hosted/on-prem).
+ * The CLI (tsx red-team.ts) is unaffected — this only gates the dashboard API.
+ */
+function mcpStdioAllowed(): boolean {
+  const v = (process.env.ALLOW_MCP_STDIO || "").toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+/** Reject an MCP stdio target unless this instance allows it. Returns true if handled (rejected). */
+function rejectMcpStdioIfDisabled(config: Config, res: ServerResponse): boolean {
+  if (
+    config.target.type === "mcp" &&
+    config.target.mcp?.transport === "stdio" &&
+    !mcpStdioAllowed()
+  ) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        error: "MCP stdio transport is disabled on this instance",
+        detail:
+          "Stdio runs a local process on the server and is only available on self-hosted deployments (set ALLOW_MCP_STDIO=true). Use a remote MCP server over Streamable HTTP instead.",
+      }),
+    );
+    return true;
+  }
+  return false;
+}
 
 // ── Run config persistence (file-based fallback when no DB) ──
 const RUN_CONFIGS_PATH = join(
@@ -1073,6 +1105,10 @@ const server = createServer(
           return;
         }
 
+        // Safety gate: never run an MCP stdio target (arbitrary local process)
+        // on a shared instance unless explicitly enabled.
+        if (rejectMcpStdioIfDisabled(config, res)) return;
+
         const job = enqueueJob(config, ctx);
         if (ctx) {
           await logAudit(ctx, "run.start", "run", job.id, {
@@ -1103,6 +1139,66 @@ const server = createServer(
             detail: formatErrorDetails(err),
           }),
         );
+      }
+      return;
+    }
+
+    // POST /api/mcp-discover — connect to an MCP target and list its surface
+    // (tools / prompts / resources) so users can verify the connection before scanning.
+    if (url.pathname === "/api/mcp-discover" && req.method === "POST") {
+      const clientIp =
+        req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
+        req.socket.remoteAddress ||
+        "unknown";
+      const { allowed, retryAfterSec } = checkApiRateLimit(clientIp, "mcp-discover");
+      if (!allowed) {
+        res.writeHead(429, { "Content-Type": "application/json", "Retry-After": String(retryAfterSec) });
+        res.end(JSON.stringify({ error: "Too many requests. Please try again later.", retryAfterSec }));
+        return;
+      }
+      let config: Config;
+      try {
+        config = loadConfigFromObject(JSON.parse(await readBody(req)));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid configuration", detail: formatErrorDetails(err) }));
+        return;
+      }
+      if (config.target.type !== "mcp" || !config.target.mcp) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Target is not an MCP server" }));
+        return;
+      }
+      // Same safety gate as runs — discovery also spawns the stdio process.
+      if (rejectMcpStdioIfDisabled(config, res)) return;
+
+      try {
+        // Bound the attempt so an unreachable/hung server can't hold the socket open.
+        const DISCOVER_TIMEOUT_MS = 25_000;
+        const d = await Promise.race([
+          discoverMcpSurface(config),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Connection timed out")), DISCOVER_TIMEOUT_MS),
+          ),
+        ]);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            transport: d.transport,
+            serverInfo: d.serverInfo ?? null,
+            protocolVersion: d.protocolVersion ?? null,
+            capabilities: d.capabilities,
+            tools: d.tools.map((t) => ({ name: t.name, description: t.description ?? "" })),
+            prompts: d.prompts.map((p) => ({ name: p.name, description: p.description ?? "" })),
+            resources: d.resources.map((r) => ({ name: r.name ?? r.uri, uri: r.uri })),
+          }),
+        );
+      } catch (err) {
+        // Connection/timeout failures are an expected user-facing outcome — return
+        // 200 with ok:false so the form can show the message inline.
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: formatErrorDetails(err) }));
       }
       return;
     }
@@ -2512,6 +2608,8 @@ Be specific and factual. Reference real incidents and realistic financial figure
               name: fw.name,
               controlCount: fw.items.length,
             })),
+            // Capability flags for the scan form.
+            allowMcpStdio: mcpStdioAllowed(),
           }),
         );
       } catch (err) {
