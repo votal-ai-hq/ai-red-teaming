@@ -190,6 +190,7 @@ import { mcpPathTraversalModule } from "../attacks-mcp/mcp-path-traversal.js";
 import { mcpSsrfModule } from "../attacks-mcp/mcp-ssrf.js";
 import { mcpCrossTenantAccessModule } from "../attacks-mcp/mcp-cross-tenant-access.js";
 import { mcpDebugAccessModule } from "../attacks-mcp/mcp-debug-access.js";
+import { buildAgentLoopAttacks } from "../attacks-mcp/mcp-agent-loop-attacks.js";
 import { apiSpecificAttackModule } from "../attacks/api-specific-attack.js";
 import { sandboxEscapeModule } from "../attacks/sandbox-escape.js";
 import { toolPermissionEscalationModule } from "../attacks/tool-permission-escalation.js";
@@ -1041,10 +1042,34 @@ export async function runRedTeam(
       console.log = origLog;
     }
     checkAbort();
-    const attacks = keepExecutableForTarget(
-      mergeCustomAttacksForRound(config, round, planned, customAttacks),
+    let plannedForRound = mergeCustomAttacksForRound(
+      config,
       round,
+      planned,
+      customAttacks,
     );
+    // Agent-in-the-loop indirect-prompt-injection attacks (opt-in). Added once
+    // in round 1: they drive an LLM holding the discovered MCP tools rather than
+    // being refined per round, and spend model tokens per attack.
+    if (
+      round === 1 &&
+      config.target.mcp?.agentLoop &&
+      (config.target.type ?? "http_agent") === "mcp"
+    ) {
+      const toolNames = (mcpAnalysis?.tools ?? [])
+        .map((t) => t.name)
+        .filter(Boolean);
+      const loopAttacks = buildAgentLoopAttacks(toolNames);
+      if (loopAttacks.length > 0) {
+        plannedForRound = [...plannedForRound, ...loopAttacks];
+        log(
+          "attacks",
+          `Agent-loop mode: added ${loopAttacks.length} indirect-prompt-injection attack(s)`,
+          { round },
+        );
+      }
+    }
+    const attacks = keepExecutableForTarget(plannedForRound, round);
     log("attacks", `Round ${round}: planned ${attacks.length} attacks`, {
       round,
       totalRounds: config.attackConfig.adaptiveRounds,

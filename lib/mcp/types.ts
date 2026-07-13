@@ -62,6 +62,12 @@ export interface McpDiscoveryResult {
   tools: McpToolDescriptor[];
   prompts: McpPromptDescriptor[];
   resources: McpResourceDescriptor[];
+  /**
+   * Server-provided instructions from the initialize result. Part of the MCP
+   * metadata surface, so it is scanned for tool-poisoning / injection content
+   * alongside tool and resource descriptions.
+   */
+  instructions?: string;
 }
 
 export interface McpRequestOptions {

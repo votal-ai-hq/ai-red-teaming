@@ -2,6 +2,10 @@ import type { Attack, Config, Credential, McpExecutionTrace } from "./types.js";
 import { discoverMcpSurface } from "./mcp/discovery.js";
 import { McpSession } from "./mcp/session.js";
 import { getLlmProvider } from "./llm-provider.js";
+import {
+  runMcpAgentLoop,
+  type AgentLoopScenario,
+} from "./mcp/agent-loop.js";
 
 /**
  * When an MCP tools/call fails schema validation (JSON-RPC -32602 "Invalid
@@ -116,7 +120,7 @@ class McpTargetAdapter implements TargetAdapter {
         statusCode: 400,
         body: {
           error:
-            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get")',
+            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop")',
         },
         timeMs: Date.now() - start,
       };
@@ -213,6 +217,48 @@ class McpTargetAdapter implements TargetAdapter {
               ? (attack.payload._mcpArguments as Record<string, unknown>)
               : {};
           result = await session.getPrompt(promptName, promptArgs);
+          break;
+        }
+        case "agent_loop": {
+          const scenario = attack.payload._agentScenario as
+            | AgentLoopScenario
+            | undefined;
+          if (
+            !scenario ||
+            typeof scenario !== "object" ||
+            typeof scenario.poisonedTool !== "string"
+          ) {
+            return {
+              statusCode: 400,
+              body: {
+                error:
+                  'MCP agent_loop requires payload field "_agentScenario" with a "poisonedTool"',
+              },
+              timeMs: Date.now() - start,
+            };
+          }
+          let provider;
+          try {
+            provider = getLlmProvider(config);
+          } catch {
+            return {
+              statusCode: 400,
+              body: {
+                error:
+                  "MCP agent_loop requires a configured LLM provider (no API key)",
+              },
+              timeMs: Date.now() - start,
+            };
+          }
+          session = new McpSession(config);
+          const tools = await session.listTools();
+          result = await runMcpAgentLoop(
+            config,
+            provider,
+            session,
+            tools,
+            scenario,
+          );
           break;
         }
         default:
