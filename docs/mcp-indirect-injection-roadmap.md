@@ -54,8 +54,12 @@ judge by the strong-evidence gate. The loop honors the engagement's
 allow/deny tool scope — a blocked call is still recorded and graded (the attempt
 proves the injection landed) but the destructive tool is never executed.
 
-Remaining polish: channel matrix breadth (currently document / tool_result
-templates), and richer provenance beyond verbatim-substring taint.
+Channel matrix + provenance implemented: six attack families framed across
+ingestion channels (document, tool_result, email, ticket, calendar, web_page),
+capped via `maxAttacks` to bound token cost; grading now flags destination-taint
+(retrieved content choosing a recipient/URL/path) and suppressed disclosure (a
+write the agent hides from the user). Remaining polish: memory/database channels
+and taint beyond verbatim-substring matching (e.g. transformed/encoded values).
 
 ## Proposal detail: the remaining gaps
 
