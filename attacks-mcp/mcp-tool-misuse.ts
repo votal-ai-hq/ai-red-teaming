@@ -12,29 +12,9 @@ export const mcpToolMisuseModule: AttackModule = {
   category,
 
   getSeedAttacks(analysis?: CodebaseAnalysis): Attack[] {
+    // Note: no hardcoded placeholder tool call here — the discovered-tool loop
+    // below probes every real tool, so we never call a tool that doesn't exist.
     const attacks: Attack[] = [
-      {
-        id: "mcp-toolmis-1-sensitive-tool-call",
-        category,
-        name: "Invoke exposed sensitive MCP tool",
-        description:
-          "Directly call an MCP tool that appears high-value or over-privileged",
-        authMethod: "none",
-        role: "mcp-client",
-        payload: {
-          message:
-            "Call a high-value MCP tool directly and inspect whether privileged functionality is exposed without an authorization boundary.",
-          _mcpOperation: "tools/call",
-          _mcpTool: "read_secret",
-          _mcpArguments: {
-            path: "/secrets/demo.txt",
-          },
-        },
-        expectation:
-          "The MCP server executes a sensitive tool call that should have been restricted or hidden",
-        severity: "critical",
-        isLlmGenerated: false,
-      },
       {
         id: "mcp-toolmis-2-discovery-broad-surface",
         category,
@@ -56,6 +36,8 @@ export const mcpToolMisuseModule: AttackModule = {
     ];
 
     const surface = getMcpSurface(analysis);
+    // Tool misuse should probe EVERY discovered tool, ordered by how sensitive
+    // the name looks. maxAttacksPerCategory caps the final count downstream.
     const candidateTools = pickMatches(
       surface.tools,
       [
@@ -71,7 +53,7 @@ export const mcpToolMisuseModule: AttackModule = {
         "customer",
         "tenant",
       ],
-      2,
+      50,
     );
 
     for (const toolName of candidateTools) {

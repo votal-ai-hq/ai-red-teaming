@@ -695,17 +695,25 @@ export async function runRedTeam(
     const discoveredTools = new Set(
       (mcpAnalysis?.tools ?? []).map((t) => t.name).filter(Boolean),
     );
+    // Honor the operator's tool scope — the allow/deny lists keep destructive or
+    // out-of-scope tools (e.g. a code-writing "fix" tool) from ever being called.
+    const allow = new Set(config.target.mcp?.allowlistedTools ?? []);
+    const deny = new Set(config.target.mcp?.denylistedTools ?? []);
     const kept = list.filter((a) => {
       const p = a.payload as Record<string, unknown>;
       const op = p?._mcpOperation;
       if (typeof op !== "string") return false;
       if (op === "prompts/get" && !hasPrompts) return false;
       if (op === "resources/read" && !hasResources) return false;
-      // Only attack tools that were actually discovered. (Skip the check if we
-      // discovered none — e.g. discovery failed — rather than dropping everything.)
-      if (op === "tools/call" && discoveredTools.size > 0) {
+      if (op === "tools/call") {
         const tool = p?._mcpTool;
-        if (typeof tool === "string" && !discoveredTools.has(tool)) return false;
+        if (typeof tool === "string") {
+          if (deny.has(tool)) return false; // explicitly out of scope
+          if (allow.size > 0 && !allow.has(tool)) return false; // not in allowlist
+          // Only attack tools that were actually discovered (skip if we found
+          // none — e.g. discovery failed — rather than dropping everything).
+          if (discoveredTools.size > 0 && !discoveredTools.has(tool)) return false;
+        }
       }
       return true;
     });
@@ -713,7 +721,7 @@ export async function runRedTeam(
     if (dropped > 0) {
       log(
         "attacks",
-        `MCP target: skipped ${dropped} attack(s) that can't run here (no "_mcpOperation", unsupported operation, or a tool the server doesn't expose)`,
+        `MCP target: skipped ${dropped} attack(s) that can't/shouldn't run here (no "_mcpOperation", unsupported operation, undiscovered tool, or an allow/deny-listed tool)`,
         { round },
       );
     }
