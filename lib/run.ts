@@ -680,6 +680,9 @@ export async function runRedTeam(
   //     the adapter rejects with HTTP 400 → falsely scored "Defended".
   //  2. an operation the server doesn't expose (e.g. prompts/get or resources/read
   //     on a tools-only server) → JSON-RPC -32601 "Method not found".
+  //  3. a tools/call whose _mcpTool isn't one the server actually exposes (some
+  //     seed attacks use placeholder names like "read_secret") → -32602 "Tool not
+  //     found". Attacks should only target discovered tools.
   const keepExecutableForTarget = (
     list: Attack[],
     round: number,
@@ -689,18 +692,28 @@ export async function runRedTeam(
     const caps = surface?.capabilities ?? [];
     const hasPrompts = caps.includes("prompts") || (surface?.prompts?.length ?? 0) > 0;
     const hasResources = caps.includes("resources") || (surface?.resources?.length ?? 0) > 0;
+    const discoveredTools = new Set(
+      (mcpAnalysis?.tools ?? []).map((t) => t.name).filter(Boolean),
+    );
     const kept = list.filter((a) => {
-      const op = (a.payload as Record<string, unknown>)?._mcpOperation;
+      const p = a.payload as Record<string, unknown>;
+      const op = p?._mcpOperation;
       if (typeof op !== "string") return false;
       if (op === "prompts/get" && !hasPrompts) return false;
       if (op === "resources/read" && !hasResources) return false;
+      // Only attack tools that were actually discovered. (Skip the check if we
+      // discovered none — e.g. discovery failed — rather than dropping everything.)
+      if (op === "tools/call" && discoveredTools.size > 0) {
+        const tool = p?._mcpTool;
+        if (typeof tool === "string" && !discoveredTools.has(tool)) return false;
+      }
       return true;
     });
     const dropped = list.length - kept.length;
     if (dropped > 0) {
       log(
         "attacks",
-        `MCP target: skipped ${dropped} attack(s) that can't run here (no "_mcpOperation", or the server doesn't expose prompts/resources)`,
+        `MCP target: skipped ${dropped} attack(s) that can't run here (no "_mcpOperation", unsupported operation, or a tool the server doesn't expose)`,
         { round },
       );
     }
