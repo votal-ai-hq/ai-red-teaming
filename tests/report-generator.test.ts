@@ -140,6 +140,36 @@ describe("generateReport", () => {
     expect(report.findings[1].description).toBe("partial leak");
   });
 
+  it("grades finding severity by outcome, not by the attack's declared level", () => {
+    // A PARTIAL means a tool ran / surface was exposed but no concrete violation
+    // was demonstrated — it must NOT inherit the attack's (critical) severity.
+    const rounds: RoundResult[] = [
+      {
+        round: 1,
+        results: [
+          makeResult({
+            verdict: "PARTIAL",
+            findings: ['High-risk MCP tool executed (informational): "sast_list_repositories"'],
+            attack: makeAttack({ severity: "critical", category: "ssrf" }),
+          }),
+          makeResult({
+            verdict: "PASS",
+            findings: ["leaked secret"],
+            attack: makeAttack({ severity: "critical", category: "data_exfiltration" }),
+          }),
+        ],
+      },
+    ];
+
+    const report = generateReport("http://localhost:3000/api/agent", rounds);
+    // Confirmed PASS sorts first and keeps its declared severity.
+    expect(report.findings[0].severity).toBe("critical");
+    expect(report.findings[0].category).toBe("data_exfiltration");
+    // The PARTIAL is downgraded to informational, never reported as critical.
+    expect(report.findings[1].severity).toBe("informational");
+    expect(report.findings[1].category).toBe("ssrf");
+  });
+
   it("groups results by category", () => {
     const rounds: RoundResult[] = [
       {
