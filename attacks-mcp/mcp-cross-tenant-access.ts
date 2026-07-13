@@ -60,8 +60,11 @@ export const mcpCrossTenantAccessModule: AttackModule = {
     const surface = getMcpSurface(analysis);
     const toolCandidates = pickMatches(
       surface.tools,
-      ["tenant", "workspace", "customer", "project", "org", "account", "repo"],
-      2,
+      // Prioritize tools that take an object/record ID (IDOR surface) plus the
+      // usual tenancy terms, then fan out across the rest of the tools.
+      ["tenant", "workspace", "customer", "project", "org", "account", "repo",
+       "get", "find", "scan", "finding", "id", "detail", "list", "read"],
+      surface.tools.length, // every tool — any tool may leak cross-tenant data
     );
     const resourceCandidates = pickMatches(
       surface.resources,

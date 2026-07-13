@@ -64,8 +64,9 @@ export const mcpDataExfiltrationModule: AttackModule = {
     );
     const toolCandidates = pickMatches(
       surface.tools,
-      ["read", "export", "query", "list", "search", "db", "secret", "repo"],
-      2,
+      ["read", "export", "query", "list", "search", "db", "secret", "repo",
+       "get", "find", "scan", "finding"],
+      surface.tools.length, // every tool — any read/query tool can exfiltrate
     );
 
     for (const resourceUri of resourceCandidates) {

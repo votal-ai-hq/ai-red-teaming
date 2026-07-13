@@ -61,7 +61,11 @@ export function pickMatches(
     .map((entry) => entry.value);
 
   if (matched.length > 0) {
-    return matched.slice(0, limit);
+    // Keyword-relevant tools first, then the remaining discovered tools — so a
+    // larger limit covers the whole surface (prioritized) instead of stopping at
+    // the first couple of matches and leaving most tools untested.
+    const rest = values.filter((value) => !matched.includes(value));
+    return [...matched, ...rest].slice(0, limit);
   }
 
   return values.slice(0, limit);

@@ -680,6 +680,9 @@ export async function runRedTeam(
   //     the adapter rejects with HTTP 400 → falsely scored "Defended".
   //  2. an operation the server doesn't expose (e.g. prompts/get or resources/read
   //     on a tools-only server) → JSON-RPC -32601 "Method not found".
+  //  3. a tools/call whose _mcpTool isn't one the server actually exposes (some
+  //     seed attacks use placeholder names like "read_secret") → -32602 "Tool not
+  //     found". Attacks should only target discovered tools.
   const keepExecutableForTarget = (
     list: Attack[],
     round: number,
@@ -689,18 +692,36 @@ export async function runRedTeam(
     const caps = surface?.capabilities ?? [];
     const hasPrompts = caps.includes("prompts") || (surface?.prompts?.length ?? 0) > 0;
     const hasResources = caps.includes("resources") || (surface?.resources?.length ?? 0) > 0;
+    const discoveredTools = new Set(
+      (mcpAnalysis?.tools ?? []).map((t) => t.name).filter(Boolean),
+    );
+    // Honor the operator's tool scope — the allow/deny lists keep destructive or
+    // out-of-scope tools (e.g. a code-writing "fix" tool) from ever being called.
+    const allow = new Set(config.target.mcp?.allowlistedTools ?? []);
+    const deny = new Set(config.target.mcp?.denylistedTools ?? []);
     const kept = list.filter((a) => {
-      const op = (a.payload as Record<string, unknown>)?._mcpOperation;
+      const p = a.payload as Record<string, unknown>;
+      const op = p?._mcpOperation;
       if (typeof op !== "string") return false;
       if (op === "prompts/get" && !hasPrompts) return false;
       if (op === "resources/read" && !hasResources) return false;
+      if (op === "tools/call") {
+        const tool = p?._mcpTool;
+        if (typeof tool === "string") {
+          if (deny.has(tool)) return false; // explicitly out of scope
+          if (allow.size > 0 && !allow.has(tool)) return false; // not in allowlist
+          // Only attack tools that were actually discovered (skip if we found
+          // none — e.g. discovery failed — rather than dropping everything).
+          if (discoveredTools.size > 0 && !discoveredTools.has(tool)) return false;
+        }
+      }
       return true;
     });
     const dropped = list.length - kept.length;
     if (dropped > 0) {
       log(
         "attacks",
-        `MCP target: skipped ${dropped} attack(s) that can't run here (no "_mcpOperation", or the server doesn't expose prompts/resources)`,
+        `MCP target: skipped ${dropped} attack(s) that can't/shouldn't run here (no "_mcpOperation", unsupported operation, undiscovered tool, or an allow/deny-listed tool)`,
         { round },
       );
     }
