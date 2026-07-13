@@ -36,8 +36,9 @@ export const mcpToolMisuseModule: AttackModule = {
     ];
 
     const surface = getMcpSurface(analysis);
-    // Tool misuse should probe EVERY discovered tool, ordered by how sensitive
-    // the name looks. maxAttacksPerCategory caps the final count downstream.
+    // Probe EVERY discovered tool (ordered by how sensitive the name looks).
+    // Seed attacks are not capped by maxAttacksPerCategory, so this guarantees
+    // one tool-misuse attempt per tool regardless of how many the server exposes.
     const candidateTools = pickMatches(
       surface.tools,
       [
@@ -53,7 +54,7 @@ export const mcpToolMisuseModule: AttackModule = {
         "customer",
         "tenant",
       ],
-      50,
+      surface.tools.length,
     );
 
     for (const toolName of candidateTools) {

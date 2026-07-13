@@ -66,7 +66,7 @@ export const mcpDataExfiltrationModule: AttackModule = {
       surface.tools,
       ["read", "export", "query", "list", "search", "db", "secret", "repo",
        "get", "find", "scan", "finding"],
-      12,
+      surface.tools.length, // every tool — any read/query tool can exfiltrate
     );
 
     for (const resourceUri of resourceCandidates) {

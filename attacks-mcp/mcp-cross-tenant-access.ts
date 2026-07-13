@@ -64,7 +64,7 @@ export const mcpCrossTenantAccessModule: AttackModule = {
       // usual tenancy terms, then fan out across the rest of the tools.
       ["tenant", "workspace", "customer", "project", "org", "account", "repo",
        "get", "find", "scan", "finding", "id", "detail", "list", "read"],
-      12,
+      surface.tools.length, // every tool — any tool may leak cross-tenant data
     );
     const resourceCandidates = pickMatches(
       surface.resources,
