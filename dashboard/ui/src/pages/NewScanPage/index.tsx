@@ -663,7 +663,17 @@ export default function NewScanPage() {
     );
   }
 
-  const allCatsSelected = ref && selectedCategories.length === ref.categories.length;
+  // For MCP targets, only categories with native MCP attacks are relevant —
+  // scope the category picker to them so the scan targets the actual tools.
+  const isMcpTarget = targetType === "mcp";
+  const selectableCategories =
+    isMcpTarget && ref?.mcpCategories?.length
+      ? ref.categories.filter((c) => ref.mcpCategories!.includes(c))
+      : (ref?.categories ?? []);
+
+  const allCatsSelected =
+    selectableCategories.length > 0 &&
+    selectedCategories.length === selectableCategories.length;
   const allStratsSelected = ref && selectedStrategies.length === ref.strategies.length;
 
   // Group strategies by level
@@ -769,7 +779,15 @@ export default function NewScanPage() {
                     <button
                       key={t.value}
                       type="button"
-                      onClick={() => setTargetType(t.value)}
+                      onClick={() => {
+                        setTargetType(t.value);
+                        // Default to MCP-relevant categories when switching to MCP.
+                        if (t.value === "mcp" && ref?.mcpCategories?.length) {
+                          setSelectedCategories(
+                            ref.categories.filter((c) => ref.mcpCategories!.includes(c)),
+                          );
+                        }
+                      }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                         targetType === t.value
                           ? "bg-primary text-white border-primary"
@@ -1091,12 +1109,12 @@ export default function NewScanPage() {
               <CardContent className="pt-5">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-xs text-muted-foreground">
-                    {selectedCategories.length}/{ref.categories.length} selected
+                    {selectedCategories.length}/{selectableCategories.length} selected
                   </span>
                   <div className="flex gap-3">
                     <button
                       type="button"
-                      onClick={() => setSelectedCategories([...ref.categories])}
+                      onClick={() => setSelectedCategories([...selectableCategories])}
                       className="text-xs font-medium text-primary hover:text-primary/80"
                     >
                       Select all
@@ -1118,7 +1136,7 @@ export default function NewScanPage() {
                       <div
                         className="h-full bg-primary rounded-full transition-all duration-300"
                         style={{
-                          width: `${(selectedCategories.length / ref.categories.length) * 100}%`,
+                          width: `${(selectedCategories.length / Math.max(1, selectableCategories.length)) * 100}%`,
                         }}
                       />
                     </div>
@@ -1136,8 +1154,14 @@ export default function NewScanPage() {
                   />
                 </div>
 
+                {isMcpTarget && (
+                  <p className="text-[11px] text-muted-foreground mb-3 -mt-1">
+                    Showing the {selectableCategories.length} categories with native MCP attacks — the rest don&rsquo;t apply to tool-call targets.
+                  </p>
+                )}
+
                 <div className="flex flex-wrap gap-2">
-                  {ref.categories
+                  {selectableCategories
                     .filter((cat) =>
                       !categorySearch ||
                       prettyCat(cat).toLowerCase().includes(categorySearch.toLowerCase()) ||
@@ -1180,6 +1204,11 @@ export default function NewScanPage() {
             <SectionHeader step={4} title="Choose strategies" icon={Play} />
             <Card>
               <CardContent className="pt-5">
+                {isMcpTarget && (
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    Strategies shape LLM-generated attacks. MCP scans mainly run tool-call seed attacks, so strategies have limited effect here — leave LLM generation off for the most relevant MCP results.
+                  </p>
+                )}
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-xs text-muted-foreground">
                     {selectedStrategies.length}/{ref.strategies.length} selected

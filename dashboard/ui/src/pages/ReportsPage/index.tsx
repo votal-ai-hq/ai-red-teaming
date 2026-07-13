@@ -612,26 +612,27 @@ function FindingRow({ result }: { result: ReportResult }) {
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
                     Judge Policy — {result.policyUsed.name}
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 text-xs">
+                  {/* Stacked vertically so long criteria stay readable */}
+                  <div className="space-y-2.5 text-xs">
                     {result.policyUsed.pass_criteria && result.policyUsed.pass_criteria.length > 0 && (
-                      <div className="min-w-0">
-                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">PASS criteria:</span>
+                      <div className="border-l-2 border-emerald-400/60 pl-2.5">
+                        <div className="font-semibold text-emerald-600 dark:text-emerald-400">PASS criteria</div>
                         <ul className="list-disc pl-4 text-muted-foreground mt-0.5 space-y-0.5 break-words">
                           {result.policyUsed.pass_criteria.map((c, i) => <li key={i}>{c}</li>)}
                         </ul>
                       </div>
                     )}
                     {result.policyUsed.fail_criteria && result.policyUsed.fail_criteria.length > 0 && (
-                      <div className="min-w-0">
-                        <span className="font-semibold text-red-600 dark:text-red-400">FAIL criteria:</span>
+                      <div className="border-l-2 border-red-400/60 pl-2.5">
+                        <div className="font-semibold text-red-600 dark:text-red-400">FAIL criteria</div>
                         <ul className="list-disc pl-4 text-muted-foreground mt-0.5 space-y-0.5 break-words">
                           {result.policyUsed.fail_criteria.map((c, i) => <li key={i}>{c}</li>)}
                         </ul>
                       </div>
                     )}
                     {result.policyUsed.partial_criteria && result.policyUsed.partial_criteria.length > 0 && (
-                      <div className="min-w-0">
-                        <span className="font-semibold text-amber-600 dark:text-amber-400">PARTIAL criteria:</span>
+                      <div className="border-l-2 border-amber-400/60 pl-2.5">
+                        <div className="font-semibold text-amber-600 dark:text-amber-400">PARTIAL criteria</div>
                         <ul className="list-disc pl-4 text-muted-foreground mt-0.5 space-y-0.5 break-words">
                           {result.policyUsed.partial_criteria.map((c, i) => <li key={i}>{c}</li>)}
                         </ul>

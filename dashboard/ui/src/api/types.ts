@@ -287,6 +287,8 @@ export interface ReferenceData {
   frameworks?: { name: string; items: unknown[] }[];
   /** Whether this instance permits MCP stdio targets (self-hosted only). */
   allowMcpStdio?: boolean;
+  /** Categories that have native MCP attacks (used to scope the form for MCP targets). */
+  mcpCategories?: string[];
 }
 
 export interface McpDiscoverResult {

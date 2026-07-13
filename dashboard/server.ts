@@ -24,7 +24,7 @@ import {
   getJudgeProvider,
   resolveJudgeProviderModel,
 } from "../lib/llm-provider.js";
-import { runRedTeam, type RunProgress } from "../lib/run.js";
+import { runRedTeam, MCP_MODULES, type RunProgress } from "../lib/run.js";
 import { formatErrorDetails } from "../lib/error-utils.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
 import {
@@ -2611,6 +2611,9 @@ Be specific and factual. Reference real incidents and realistic financial figure
             })),
             // Capability flags for the scan form.
             allowMcpStdio: mcpStdioAllowed(),
+            // Categories that have native MCP attacks — used to scope the form
+            // to relevant attacks when the target is an MCP server.
+            mcpCategories: [...new Set(MCP_MODULES.map((m) => m.category))],
           }),
         );
       } catch (err) {
