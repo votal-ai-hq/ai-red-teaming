@@ -1,6 +1,71 @@
 import type { Attack, Config, Credential, McpExecutionTrace } from "./types.js";
 import { discoverMcpSurface } from "./mcp/discovery.js";
 import { McpSession } from "./mcp/session.js";
+import { getLlmProvider } from "./llm-provider.js";
+
+/**
+ * When an MCP tools/call fails schema validation (JSON-RPC -32602 "Invalid
+ * arguments"), ask the LLM to produce corrected arguments that satisfy the
+ * tool's inputSchema while preserving the adversarial intent, so the attack
+ * actually exercises the tool instead of erroring out. Returns null if repair
+ * isn't possible (no schema, no LLM key, unparseable output).
+ */
+async function repairMcpToolArgs(
+  config: Config,
+  session: McpSession,
+  toolName: string,
+  attemptedArgs: Record<string, unknown>,
+  errorMessage: string,
+  attack: Attack,
+): Promise<Record<string, unknown> | null> {
+  let schema: unknown;
+  try {
+    const tools = await session.listTools();
+    schema = tools.find((t) => t.name === toolName)?.inputSchema;
+  } catch {
+    return null;
+  }
+  if (!schema) return null;
+
+  let llm;
+  try {
+    llm = getLlmProvider(config);
+  } catch {
+    return null; // no LLM configured — can't repair
+  }
+
+  const prompt = `An MCP tools/call failed schema validation. Produce a corrected JSON "arguments" object that (a) satisfies the tool's inputSchema and (b) preserves the security-test intent.
+
+TOOL: ${toolName}
+INPUT SCHEMA (JSON Schema):
+${JSON.stringify(schema)}
+ATTEMPTED ARGUMENTS:
+${JSON.stringify(attemptedArgs)}
+VALIDATION ERROR:
+${errorMessage}
+ATTACK INTENT: ${attack.name} — ${attack.description ?? ""}
+
+Rules:
+- Output ONLY a JSON object of arguments (no prose, no markdown).
+- Satisfy every required field and correct type from the schema.
+- Preserve adversarial values where they still fit the schema (e.g. other-tenant / other-org IDs, path traversal strings, oversized inputs). If the schema wants an array of IDs, include plausible/guessed IDs (including other-org-style IDs) to probe IDOR.`;
+
+  try {
+    const text = await llm.chat({
+      model: config.attackConfig.llmModel,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+      maxTokens: 600,
+      responseFormat: "json_object",
+    });
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface AttackExecutionResult {
   statusCode: number;
@@ -78,12 +143,39 @@ class McpTargetAdapter implements TargetAdapter {
               timeMs: Date.now() - start,
             };
           }
-          const toolArgs =
+          let toolArgs =
             typeof attack.payload._mcpArguments === "object" &&
             attack.payload._mcpArguments !== null
               ? (attack.payload._mcpArguments as Record<string, unknown>)
               : {};
-          result = await session.callTool(toolName, toolArgs);
+          try {
+            result = await session.callTool(toolName, toolArgs);
+          } catch (callErr) {
+            const msg = (callErr as Error)?.message ?? "";
+            // On a schema/arg validation error, repair the args with the LLM and
+            // retry once so the attack actually reaches the tool.
+            if (/-32602/.test(msg) && /invalid arguments/i.test(msg)) {
+              const repaired = await repairMcpToolArgs(
+                config,
+                session,
+                toolName,
+                toolArgs,
+                msg,
+                attack,
+              );
+              if (repaired) {
+                toolArgs = repaired;
+                // Reflect the args actually sent in the report's request panel.
+                attack.payload._mcpArguments = repaired;
+                (attack.payload as Record<string, unknown>)._mcpArgsRepaired = true;
+                result = await session.callTool(toolName, toolArgs);
+              } else {
+                throw callErr;
+              }
+            } else {
+              throw callErr;
+            }
+          }
           break;
         }
         case "resources/read": {
