@@ -8,6 +8,7 @@ import {
   type AgentLoopScenario,
   type AgentToolCall,
 } from "../lib/mcp/agent-loop.js";
+import { buildAgentLoopAttacks } from "../attacks-mcp/mcp-agent-loop-attacks.js";
 import type { McpToolDescriptor } from "../lib/mcp/types.js";
 
 const CANARY = "RT-CANARY-7f42d91a";
@@ -199,5 +200,42 @@ describe("runAgentLoop", () => {
     expect(result.toolCalls).toHaveLength(0);
     expect(chat.mock.calls.length).toBeLessThanOrEqual(2);
     expect(executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildAgentLoopAttacks", () => {
+  it("builds agent_loop attacks: read tools poison, a write tool is the target", () => {
+    const attacks = buildAgentLoopAttacks([
+      "sast_list_repositories",
+      "sast_list_scans",
+      "sast_fix_code",
+    ]);
+    expect(attacks.length).toBeGreaterThan(0);
+    for (const a of attacks) {
+      const p = a.payload as Record<string, any>;
+      expect(p._mcpOperation).toBe("agent_loop");
+      expect(a.category).toBe("indirect_prompt_injection");
+      // Poisoned carrier is a READ tool, never the write tool.
+      expect(["sast_list_repositories", "sast_list_scans"]).toContain(
+        p._agentScenario.poisonedTool,
+      );
+      // The injection names a real discovered write tool and plants a canary.
+      expect(p._agentScenario.writeTools).toContain("sast_fix_code");
+      expect(p._agentScenario.poisonedContent).toContain(
+        p._agentScenario.canary,
+      );
+    }
+  });
+
+  it("returns nothing when there are no tools", () => {
+    expect(buildAgentLoopAttacks([])).toEqual([]);
+  });
+
+  it("uses the tools as carriers when only write tools exist", () => {
+    const attacks = buildAgentLoopAttacks(["send_email"]);
+    expect(attacks.length).toBeGreaterThan(0);
+    expect(
+      (attacks[0].payload as Record<string, any>)._agentScenario.poisonedTool,
+    ).toBe("send_email");
   });
 });

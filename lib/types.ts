@@ -428,6 +428,13 @@ export interface McpTargetConfig {
   denylistedTools?: string[];
   startupTimeoutMs?: number;
   sessionTimeoutMs?: number;
+  /**
+   * Enable the agent-in-the-loop indirect-prompt-injection mode: drive an LLM
+   * that holds the MCP tools, seed poisoned content into a read tool's result,
+   * and observe whether the model chains into an unauthorized write or leaks a
+   * planted canary. Requires a configured LLM provider. Off by default.
+   */
+  agentLoop?: boolean;
 }
 
 export interface Config {

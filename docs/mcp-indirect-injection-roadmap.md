@@ -44,10 +44,18 @@ The loop is dependency-injected (`chat`, `executeTool`) so it is unit-testable
 without a live model or server; `runMcpAgentLoop` adapts a real provider +
 `McpSession`.
 
-**Not yet wired** into the run pipeline: a config flag to enable agent mode, an
-MCP attack module that emits `AgentLoopScenario`s (task × poisoned-tool ×
-channel), and mapping `AgentLoopResult` into `AttackResult`/findings for the
-report. That integration is the next step.
+**Wired into the run pipeline.** Enable per MCP target with
+`target.mcp.agentLoop: true`. When set, round 1 builds agent-loop attacks from
+the discovered tool surface (`buildAgentLoopAttacks`, one per read-tool carrier ×
+injection template), dispatched through the new `agent_loop` MCP operation in
+`lib/target-adapter.ts`. `analyzeMcpResponse` maps `compromised` → PASS/FAIL and
+surfaces the behavioral findings; a genuine compromise is protected from the LLM
+judge by the strong-evidence gate. The loop honors the engagement's
+allow/deny tool scope — a blocked call is still recorded and graded (the attempt
+proves the injection landed) but the destructive tool is never executed.
+
+Remaining polish: channel matrix breadth (currently document / tool_result
+templates), and richer provenance beyond verbatim-substring taint.
 
 ## Proposal detail: the remaining gaps
 

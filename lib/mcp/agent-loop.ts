@@ -318,11 +318,24 @@ export async function runMcpAgentLoop(
   scenario: AgentLoopScenario,
 ): Promise<AgentLoopResult> {
   const model = config.attackConfig.llmModel;
+  // Safety: the model chooses which tools to call, so honor the engagement's
+  // allow/deny scope here. A blocked call is still RECORDED and graded (the
+  // "attempt" after poisoned content is what proves the injection landed), but
+  // an out-of-scope or destructive tool is never actually executed.
+  const deny = new Set(config.target.mcp?.denylistedTools ?? []);
+  const allow = new Set(config.target.mcp?.allowlistedTools ?? []);
+  const outOfScope = (tool: string) =>
+    deny.has(tool) || (allow.size > 0 && !allow.has(tool));
   return runAgentLoop(
     {
       tools,
       chat: (messages) => provider.chat({ model, messages, responseFormat: "json_object" }),
-      executeTool: (tool, args) => session.callTool(tool, args),
+      executeTool: (tool, args) =>
+        outOfScope(tool)
+          ? Promise.resolve(
+              `ERROR: tool "${tool}" is out of scope for this engagement and was not executed`,
+            )
+          : session.callTool(tool, args),
     },
     scenario,
   );
