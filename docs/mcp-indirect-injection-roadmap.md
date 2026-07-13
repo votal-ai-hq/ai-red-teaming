@@ -21,12 +21,35 @@ but not "does an agent, once manipulated, chain into an unauthorized write."
 | #1/#4 Canary detection | ✅ Hook ready | `analyzeResponse` detects a planted `_canary` reflected in **server** output/trace. Seeding canaries into a controlled environment still needs the agent-in-the-loop mode below. |
 | #2b Tool-output injection | ⚠️ Detect-only | Detects injection strings served by the server; cannot confirm an orchestrator would act on them (no agent). |
 | #2a/#2c/#2d Document / email / web-page channels | ❌ | No channel matrix; needs seeded content sources. |
-| #2e Cross-tool read→write | ⚠️ Wire-level only | `analyzeMcpTrace` catches server-side chaining; model-driven chaining needs the agent mode. |
+| #2e Cross-tool read→write | ✅ Harness built | `analyzeMcpTrace` catches server-side chaining; model-driven chaining now covered by `agent-loop.ts` (write-after-poisoned-read). Pipeline wiring pending. |
 | #3 Attack corpus × 8 channels | ⚠️ | Families exist; channel matrix not modeled. |
-| #6 Argument provenance / taint | ❌ | See proposal below. |
+| #6 Argument provenance / taint | ✅ Harness built | `taintedArgKeys` in `agent-loop.ts` flags retrieval-sourced values reaching write arguments. Pipeline wiring pending. |
 | #8 Approval-flow testing | ❌ | Needs agent mode with an approval gate. |
 
-## Proposal: agent-in-the-loop MCP mode (the remaining gaps)
+## Agent-in-the-loop MCP mode — status
+
+**Core harness: implemented** in `lib/mcp/agent-loop.ts` (tested in
+`tests/mcp-agent-loop.test.ts`). It drives an LLM that holds the MCP tools via a
+portable ReAct/JSON protocol (the provider layer is text-only), seeds poisoned
+content into a designated read tool's result, and grades the agent's own
+tool-call trace against the OWASP fail conditions:
+
+- **write-after-read** — a write/consequential tool invoked after the poisoned
+  read (`classifyToolRisk` + `afterPoisonedRead`);
+- **canary exfiltration** — the planted marker reaching an outbound argument;
+- **argument taint (#6)** — a value lifted verbatim from retrieved content
+  flowing into a write argument (`taintedArgKeys`).
+
+The loop is dependency-injected (`chat`, `executeTool`) so it is unit-testable
+without a live model or server; `runMcpAgentLoop` adapts a real provider +
+`McpSession`.
+
+**Not yet wired** into the run pipeline: a config flag to enable agent mode, an
+MCP attack module that emits `AgentLoopScenario`s (task × poisoned-tool ×
+channel), and mapping `AgentLoopResult` into `AttackResult`/findings for the
+report. That integration is the next step.
+
+## Proposal detail: the remaining gaps
 
 The gaps that matter most — cross-tool chaining (#2e), write-triggered-by-content
 (#2b), argument provenance (#6), and true canary seeding (#1) — all require the
