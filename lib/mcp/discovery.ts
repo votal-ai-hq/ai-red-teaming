@@ -32,6 +32,7 @@ export async function discoverMcpSurface(
       tools,
       prompts,
       resources,
+      instructions: init.instructions,
     };
   } finally {
     await session.close();
