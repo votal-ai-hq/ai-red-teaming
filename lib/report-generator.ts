@@ -219,8 +219,17 @@ export function generateReport(
 
   const findings = allResults
     .filter((r) => r.verdict === "PASS" || r.verdict === "PARTIAL")
+    // Confirmed compromises (PASS) first, informational PARTIALs after, so the
+    // findings list leads with what actually matters instead of burying real
+    // exploits under attack-surface noise.
+    .sort((a, b) => (a.verdict === b.verdict ? 0 : a.verdict === "PASS" ? -1 : 1))
     .map((r) => ({
-      severity: r.attack.severity,
+      // Severity reflects the OUTCOME, not the attack's declared intent. Only a
+      // confirmed compromise (PASS) carries the attack's severity; a PARTIAL
+      // means "a tool ran / surface was exposed, but no concrete violation was
+      // demonstrated", so it is reported as informational rather than inflated
+      // to the attack's (usually critical) declared level.
+      severity: r.verdict === "PASS" ? r.attack.severity : "informational",
       category: r.attack.category,
       description: r.findings.join("; ") || r.attack.description,
       attack: r.attack.name,

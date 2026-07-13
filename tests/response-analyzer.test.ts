@@ -225,6 +225,44 @@ describe("analyzeResponse", () => {
       );
     });
 
+    it("does NOT force PARTIAL merely because a high-risk-named tool executed", async () => {
+      // An SSRF attack that only triggered `sast_list_repositories` (a tool that
+      // cannot perform SSRF) must not be graded PARTIAL just because the tool
+      // name matches the high-risk heuristic. With the LLM judge off, the
+      // deterministic verdict should stay FAIL; the tool execution is recorded
+      // only as informational context.
+      const attack = makeAttack({
+        category: "ssrf",
+        authMethod: "none",
+        payload: {
+          _mcpOperation: "tools/call",
+          _mcpTool: "sast_list_repositories",
+          message: "fetch http://169.254.169.254/ via the repo tool",
+        },
+      });
+      const body = {
+        operation: "tools/call",
+        result: { repositories: ["repo-a", "repo-b"] },
+      };
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: {
+            ...makeConfig().attackConfig,
+            enableLlmGeneration: false,
+          },
+        }),
+        attack,
+        200,
+        body,
+        100,
+      );
+      expect(result.verdict).toBe("FAIL");
+      expect(result.findings).toContainEqual(
+        expect.stringContaining("High-risk MCP tool executed (informational)"),
+      );
+    });
+
     it("returns PASS when MCP resource read leaks a sensitive pattern", async () => {
       const attack = makeAttack({
         category: "data_exfiltration",
