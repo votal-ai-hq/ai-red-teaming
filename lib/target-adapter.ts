@@ -6,6 +6,12 @@ import {
   runMcpAgentLoop,
   type AgentLoopScenario,
 } from "./mcp/agent-loop.js";
+import {
+  tamperHeaders,
+  parseHttpStatus,
+  type AuthVariant,
+  type AuthProbeResult,
+} from "./mcp/auth-probe.js";
 
 /**
  * When an MCP tools/call fails schema validation (JSON-RPC -32602 "Invalid
@@ -120,7 +126,7 @@ class McpTargetAdapter implements TargetAdapter {
         statusCode: 400,
         body: {
           error:
-            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop")',
+            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop", "auth_probe")',
         },
         timeMs: Date.now() - start,
       };
@@ -217,6 +223,51 @@ class McpTargetAdapter implements TargetAdapter {
               ? (attack.payload._mcpArguments as Record<string, unknown>)
               : {};
           result = await session.getPrompt(promptName, promptArgs);
+          break;
+        }
+        case "auth_probe": {
+          // Present a credential the server MUST reject (absent / invalid /
+          // wrong-audience) and observe whether it is accepted. Runs its own
+          // short-lived session with tampered headers; never touches the outer
+          // `session`.
+          const variant = (attack.payload._authVariant as AuthVariant) ?? "invalid";
+          const mcp = config.target.mcp;
+          if (!mcp || mcp.transport === "stdio") {
+            result = {
+              variant,
+              accepted: false,
+              statusCode: 0,
+              detail: "auth_probe is not applicable to this transport",
+            } satisfies AuthProbeResult;
+            break;
+          }
+          const probeConfig: Config = {
+            ...config,
+            target: {
+              ...config.target,
+              mcp: { ...mcp, headers: tamperHeaders(mcp.headers ?? {}, variant) },
+            },
+          };
+          const probeSession = new McpSession(probeConfig);
+          try {
+            await probeSession.initialize();
+            result = {
+              variant,
+              accepted: true,
+              statusCode: 200,
+              detail: `server accepted a ${variant} credential`,
+            } satisfies AuthProbeResult;
+          } catch (probeErr) {
+            const msg = (probeErr as Error)?.message ?? "";
+            result = {
+              variant,
+              accepted: false,
+              statusCode: parseHttpStatus(msg),
+              detail: msg.slice(0, 200),
+            } satisfies AuthProbeResult;
+          } finally {
+            await probeSession.close();
+          }
           break;
         }
         case "agent_loop": {

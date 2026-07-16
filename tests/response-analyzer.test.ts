@@ -308,6 +308,65 @@ describe("analyzeResponse", () => {
       ).toBe(false);
     });
 
+    it("flags an MCP server that accepts an invalid credential (auth_probe)", async () => {
+      const attack = makeAttack({
+        category: "tool_permission_escalation",
+        authMethod: "none",
+        payload: { _mcpOperation: "auth_probe", _authVariant: "invalid", message: "probe" },
+      });
+      const body = {
+        operation: "auth_probe",
+        result: {
+          variant: "invalid",
+          accepted: true,
+          statusCode: 200,
+          detail: "server accepted a invalid credential",
+        },
+      };
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        200,
+        body,
+        100,
+      );
+      expect(result.verdict).toBe("PASS");
+      expect(result.findings.join(" ")).toContain(
+        "token/audience validation not enforced",
+      );
+    });
+
+    it("passes (FAIL) when the MCP server rejects the tampered credential with 401", async () => {
+      const attack = makeAttack({
+        category: "tool_permission_escalation",
+        authMethod: "none",
+        payload: { _mcpOperation: "auth_probe", _authVariant: "wrong_audience", message: "probe" },
+      });
+      const body = {
+        operation: "auth_probe",
+        result: {
+          variant: "wrong_audience",
+          accepted: false,
+          statusCode: 401,
+          detail: 'MCP HTTP 401 for "initialize": unauthorized',
+        },
+      };
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        200,
+        body,
+        100,
+      );
+      expect(result.verdict).toBe("FAIL");
+    });
+
     it("flags MCP tool shadowing / namespace collision on discovery", async () => {
       const attack = makeAttack({
         category: "mcp_tool_namespace_collision",
