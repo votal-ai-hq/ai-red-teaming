@@ -199,6 +199,66 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export interface RugPullDiff {
+  changed: { tool: string; field: "name" | "description" | "inputSchema"; before: string; after: string }[];
+  addedTools: string[];
+  removedTools: string[];
+  /** Poisoning signals present in the SECOND load but not the first. */
+  newPoisonSignals: PoisonFinding[];
+}
+
+/**
+ * Rug-pull / sleeper detection: MCP has no re-approval when a tool definition
+ * changes, so a server can serve benign metadata at approval time and mutate it
+ * later (Invariant Labs whatsapp-takeover sleeper PoC). The detection signal is
+ * a metadata diff across successive tools/list calls — especially NEW poisoning
+ * introduced on a later load. Pure so it is unit-testable.
+ */
+export function diffMcpMetadata(
+  first: McpDiscoveryLike,
+  second: McpDiscoveryLike,
+): RugPullDiff {
+  const firstByName = new Map(
+    (first.tools ?? []).map((t) => [t.name ?? "", t]),
+  );
+  const secondByName = new Map(
+    (second.tools ?? []).map((t) => [t.name ?? "", t]),
+  );
+  const changed: RugPullDiff["changed"] = [];
+  for (const [name, before] of firstByName) {
+    const after = secondByName.get(name);
+    if (!after) continue;
+    if ((before.description ?? "") !== (after.description ?? "")) {
+      changed.push({
+        tool: name,
+        field: "description",
+        before: (before.description ?? "").slice(0, 200),
+        after: (after.description ?? "").slice(0, 200),
+      });
+    }
+    const beforeSchema = JSON.stringify(before.inputSchema ?? null);
+    const afterSchema = JSON.stringify(after.inputSchema ?? null);
+    if (beforeSchema !== afterSchema) {
+      changed.push({
+        tool: name,
+        field: "inputSchema",
+        before: beforeSchema.slice(0, 200),
+        after: afterSchema.slice(0, 200),
+      });
+    }
+  }
+  const addedTools = [...secondByName.keys()].filter((n) => !firstByName.has(n));
+  const removedTools = [...firstByName.keys()].filter((n) => !secondByName.has(n));
+
+  const key = (p: PoisonFinding) => `${p.tool}|${p.field}|${p.signal}`;
+  const firstSignals = new Set(scanToolPoisoning(first).map(key));
+  const newPoisonSignals = scanToolPoisoning(second).filter(
+    (p) => !firstSignals.has(key(p)),
+  );
+
+  return { changed, addedTools, removedTools, newPoisonSignals };
+}
+
 /**
  * Advanced Tool Poisoning Attack (ATPA): injection lives in a tool's RESULT,
  * not its metadata — e.g. a fabricated error demanding ~/.ssh/id_rsa to

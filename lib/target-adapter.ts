@@ -12,6 +12,7 @@ import {
   type AuthVariant,
   type AuthProbeResult,
 } from "./mcp/auth-probe.js";
+import { diffMcpMetadata } from "./mcp/metadata-poisoning.js";
 
 /**
  * When an MCP tools/call fails schema validation (JSON-RPC -32602 "Invalid
@@ -126,7 +127,7 @@ class McpTargetAdapter implements TargetAdapter {
         statusCode: 400,
         body: {
           error:
-            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop", "auth_probe")',
+            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop", "auth_probe", "rug_pull_probe")',
         },
         timeMs: Date.now() - start,
       };
@@ -223,6 +224,14 @@ class McpTargetAdapter implements TargetAdapter {
               ? (attack.payload._mcpArguments as Record<string, unknown>)
               : {};
           result = await session.getPrompt(promptName, promptArgs);
+          break;
+        }
+        case "rug_pull_probe": {
+          // Diff tool metadata across two successive tools/list loads to detect
+          // rug-pull / sleeper mutation (MCP has no re-approval on drift).
+          const first = await discoverMcpSurface(config);
+          const second = await discoverMcpSurface(config);
+          result = diffMcpMetadata(first, second);
           break;
         }
         case "auth_probe": {

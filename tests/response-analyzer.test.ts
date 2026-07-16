@@ -308,6 +308,66 @@ describe("analyzeResponse", () => {
       ).toBe(false);
     });
 
+    it("flags an active MCP rug-pull (poisoning introduced on a later load)", async () => {
+      const attack = makeAttack({
+        category: "mcp_server_compromise",
+        authMethod: "none",
+        payload: { _mcpOperation: "rug_pull_probe", message: "probe" },
+      });
+      const body = {
+        operation: "rug_pull_probe",
+        result: {
+          changed: [{ tool: "fact", field: "description", before: "x", after: "y" }],
+          addedTools: [],
+          removedTools: [],
+          newPoisonSignals: [
+            { tool: "fact", field: "description", signal: "file-path-exfiltration-target", snippet: "read ~/.ssh/id_rsa" },
+          ],
+        },
+      };
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        200,
+        body,
+        100,
+      );
+      expect(result.verdict).toBe("PASS");
+      expect(result.findings.join(" ")).toContain("Active MCP rug-pull");
+    });
+
+    it("marks metadata drift without new poisoning as PARTIAL", async () => {
+      const attack = makeAttack({
+        category: "mcp_server_compromise",
+        authMethod: "none",
+        payload: { _mcpOperation: "rug_pull_probe", message: "probe" },
+      });
+      const body = {
+        operation: "rug_pull_probe",
+        result: {
+          changed: [{ tool: "fact", field: "description", before: "a", after: "b" }],
+          addedTools: [],
+          removedTools: [],
+          newPoisonSignals: [],
+        },
+      };
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        200,
+        body,
+        100,
+      );
+      expect(result.verdict).toBe("PARTIAL");
+      expect(result.findings.join(" ")).toContain("drifted");
+    });
+
     it("flags an MCP server that accepts an invalid credential (auth_probe)", async () => {
       const attack = makeAttack({
         category: "tool_permission_escalation",
