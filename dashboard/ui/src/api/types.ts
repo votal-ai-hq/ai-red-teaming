@@ -182,6 +182,14 @@ export interface ComplianceFramework {
   controlCount: number;
 }
 
+export interface ComplianceControlAttack {
+  name: string;
+  category: string;
+  severity: string;
+  verdict: "PASS" | "PARTIAL" | "FAIL";
+  detail?: string;
+}
+
 export interface ComplianceResult {
   framework: string;
   code: string;
@@ -192,6 +200,10 @@ export interface ComplianceResult {
   details?: string;
   recommendations?: string[];
   attacksAnalyzed?: number;
+  /** Per-attack breakdown for this control, returned by the static-mapping
+   *  endpoint. Lets the UI associate controls back to individual vulnerabilities
+   *  (each attack carries the category the control maps against). */
+  attacks?: ComplianceControlAttack[];
 }
 
 // ── Risk ──

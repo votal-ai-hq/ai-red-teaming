@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { getReportsMeta, getReport } from "@/api/reports";
-import type { ReportMeta, FullReport, ReportResult, ReportSummary } from "@/api/types";
+import { getStaticCompliance } from "@/api/compliance";
+import type { ReportMeta, FullReport, ReportResult, ReportSummary, ComplianceResult } from "@/api/types";
 import { useDebounce } from "@/hooks/useDebounce";
 import { ScoreRing } from "@/components/shared/ScoreRing";
 import { Badge } from "@/components/ui/badge";
@@ -371,9 +372,55 @@ function extractResponseText(rb: unknown): string {
   }
 }
 
+/* ─── Per-vulnerability compliance mapping ─── */
+
+interface ComplianceControlRef {
+  framework: string;
+  code: string;
+  title: string;
+  status: string;
+}
+
+/**
+ * Invert the report-level control→attacks mapping into category→controls, so
+ * each finding can show the compliance controls its category maps against.
+ * Controls map onto attacks by category, so every finding in a tested category
+ * resolves to the same set of relevant controls.
+ */
+function buildComplianceByCategory(
+  results: ComplianceResult[],
+): Map<string, ComplianceControlRef[]> {
+  const byCat = new Map<string, ComplianceControlRef[]>();
+  for (const control of results) {
+    const cats = new Set(
+      (control.attacks ?? []).map((a) => a.category).filter(Boolean),
+    );
+    for (const cat of cats) {
+      const list = byCat.get(cat) ?? [];
+      if (!list.some((c) => c.framework === control.framework && c.code === control.code)) {
+        list.push({
+          framework: control.framework,
+          code: control.code,
+          title: control.title,
+          status: control.status,
+        });
+      }
+      byCat.set(cat, list);
+    }
+  }
+  return byCat;
+}
+
+function complianceStatusDot(status: string): string {
+  if (status === "vulnerable") return "bg-red-500";
+  if (status === "at_risk") return "bg-orange-500";
+  if (status === "secure") return "bg-emerald-500";
+  return "bg-gray-400";
+}
+
 /* ─── Finding Row (rich expandable detail) ─── */
 
-function FindingRow({ result }: { result: ReportResult }) {
+function FindingRow({ result, controls = [] }: { result: ReportResult; controls?: ComplianceControlRef[] }) {
   const [expanded, setExpanded] = useState(false);
   const conversations = result.conversation ?? result.steps ?? [];
   const atk = typeof result.attack === "object" && result.attack ? result.attack as Record<string, unknown> : null;
@@ -430,8 +477,13 @@ function FindingRow({ result }: { result: ReportResult }) {
         <TableCell>
           <Badge variant={verdictBadge(result.verdict).variant} className={verdictBadge(result.verdict).className}>{verdictLabel(result.verdict)}</Badge>
         </TableCell>
-        <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-          {result.llmReasoning || result.reasoning || "-"}
+        <TableCell className="text-sm text-muted-foreground max-w-xs align-top">
+          {/* Wrap to a few readable lines instead of a single truncated line so
+              the reasoning is legible in the table itself; the row still expands
+              for the full text (and the PDF always shows it in full). */}
+          <span className="line-clamp-3 whitespace-normal break-words">
+            {result.llmReasoning || result.reasoning || "-"}
+          </span>
         </TableCell>
       </TableRow>
 
@@ -456,6 +508,28 @@ function FindingRow({ result }: { result: ReportResult }) {
                   <span className="text-xs text-muted-foreground">{result.responseTimeMs}ms</span>
                 )}
               </div>
+
+              {/* ── Compliance mapping — controls this vulnerability maps to ── */}
+              {controls.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                    Compliance Mapping
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {controls.map((c) => (
+                      <span
+                        key={`${c.framework}-${c.code}`}
+                        title={`${c.framework} · ${c.title} — ${c.status.replace(/_/g, " ")}`}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-[11px] text-foreground"
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${complianceStatusDot(c.status)}`} />
+                        <span className="font-mono font-medium">{c.code}</span>
+                        <span className="text-muted-foreground">{c.title}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* ── Request & Response ── */}
               {hasInteraction && (
@@ -556,10 +630,10 @@ function FindingRow({ result }: { result: ReportResult }) {
                       </div>
                     </div>
                   )}
-                  {result.llmReasoning && !result.llmEvidenceFor && (
+                  {result.llmReasoning && (
                     <div className="min-w-0 flex-1 basis-full">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">LLM Reasoning</div>
-                      <ExpandableText text={result.llmReasoning} maxLines={3} />
+                      <ExpandableText text={result.llmReasoning} maxLines={6} />
                     </div>
                   )}
                 </div>
@@ -661,7 +735,27 @@ function ReportDetail({ filename }: { filename: string }) {
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [preparingPdf, setPreparingPdf] = useState(false);
+  const [complianceByCategory, setComplianceByCategory] = useState<
+    Map<string, ComplianceControlRef[]>
+  >(new Map());
   const perPage = 25;
+
+  // Fetch the deterministic compliance mapping so each finding can show the
+  // controls its category maps against. Non-blocking: the report renders
+  // regardless, and chips simply don't appear if this fails.
+  useEffect(() => {
+    let cancelled = false;
+    getStaticCompliance(filename)
+      .then((res) => {
+        if (!cancelled) setComplianceByCategory(buildComplianceByCategory(res.results));
+      })
+      .catch(() => {
+        if (!cancelled) setComplianceByCategory(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filename]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1048,7 +1142,11 @@ function ReportDetail({ filename }: { filename: string }) {
                 </TableHeader>
                 <TableBody>
                   {pagedFindings.map((result, i) => (
-                    <FindingRow key={`${getAttackName(result)}-${i}`} result={result} />
+                    <FindingRow
+                      key={`${getAttackName(result)}-${i}`}
+                      result={result}
+                      controls={complianceByCategory.get(getCategory(result)) ?? []}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -1114,7 +1212,17 @@ function ReportDetail({ filename }: { filename: string }) {
             {allRoundsResults.map((result, i) => (
               <tr key={i} className="border-b border-foreground/10" style={{ pageBreakInside: "avoid" }}>
                 <td className="text-[9px] py-1 pr-2 text-muted-foreground tabular-nums align-top">{i + 1}</td>
-                <td className="text-[9px] py-1 pr-2 font-medium align-top">{getAttackName(result)}</td>
+                <td className="text-[9px] py-1 pr-2 font-medium align-top">
+                  {getAttackName(result)}
+                  {(() => {
+                    const ctrls = complianceByCategory.get(getCategory(result)) ?? [];
+                    return ctrls.length > 0 ? (
+                      <div className="text-[8px] font-normal text-muted-foreground mt-0.5">
+                        {ctrls.map((c) => c.code).join(", ")}
+                      </div>
+                    ) : null;
+                  })()}
+                </td>
                 <td className="text-[9px] py-1 pr-2 text-muted-foreground align-top">{prettyCat(getCategory(result))}</td>
                 <td className="text-[9px] py-1 pr-2 align-top">
                   <span className={`font-semibold ${

@@ -1415,7 +1415,11 @@ const server = createServer(
             finishedAt: j.finishedAt,
             targetUrl: describeTarget(j.config),
             error: j._cancelled ? "Cancelled by user" : j.error,
-            progressCount: j.progress.length,
+            // progress is a mixed stream of phase/message events (clone, plan,
+            // analyze…) AND attack results. Count only the attack results so the
+            // "N attacks" shown on the Scan Activity row matches the report's
+            // summary.totalAttacks (both derive from the same result events).
+            progressCount: j.progress.filter((p) => p.result).length,
             reportFile: j.reportFile,
             summary: j.report?.summary,
           };
