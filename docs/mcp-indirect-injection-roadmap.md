@@ -16,7 +16,11 @@ but not "does an agent, once manipulated, chain into an unauthorized write."
 
 | Guide requirement | Status | Notes |
 |---|---|---|
-| #9 Tool-metadata poisoning | ✅ Implemented | Scans tool/prompt/resource descriptions, parameter schemas, and server `instructions` for injection directives; new IPI seed attack `mcp-ipi-0-tool-poisoning-metadata`. |
+| #9 Tool-metadata poisoning | ✅ Full-schema | `lib/mcp/metadata-poisoning.ts` scans **every** schema field (descriptions, parameter names/defaults/required arrays, non-standard keys, server instructions) with a research-backed signal set (hidden `<IMPORTANT>` tags, `~/.ssh/id_rsa` exfil targets, concealment directives, imperative "before using this tool"). Grounded in Invariant Labs / CyberArk FSP / OWASP MCP03:2025. |
+| MCP namespace collision / shadowing | ✅ New module | `mcpToolShadowingModule` + `scanToolShadowing`: cross-tool redirect directives, duplicate/near-duplicate names, tool-name squatting (Invariant shadowing PoC, OWASP MCP09:2025). |
+| Insecure output handling / ATPA | ✅ New module | `mcpInsecureOutputModule` + `scanToolResultInjection`: inspects tool **results** for fabricated errors demanding secrets and injected instructions (CyberArk ATPA, OWASP LLM01). |
+| Token audience / confused-deputy | ✅ New module | `mcpAuthAudienceModule` + `lib/mcp/auth-probe.ts` + `auth_probe` op: presents absent / invalid / wrong-audience (RFC 8707) credentials and grades acceptance as a vulnerability (MCP authorization spec MUST-reject / HTTP 401). Network transports only. Enable via the `tool_permission_escalation` category. |
+| Rug-pull / sleeper mutation | ✅ New module | `mcpRugPullModule` + `diffMcpMetadata` + `rug_pull_probe` op: loads `tools/list` twice and diffs metadata; new poisoning on a later load → PASS, benign drift → PARTIAL (Invariant sleeper PoC, OWASP MCP03 rug-pull). Enable via `mcp_server_compromise`. |
 | #4 Grade on execution trace | ✅ Partial | `analyzeMcpTrace` grades on the wire transcript; flags cross-tool chaining (a single-tool attack that invoked additional tools). |
 | #1/#4 Canary detection | ✅ Hook ready | `analyzeResponse` detects a planted `_canary` reflected in **server** output/trace. Seeding canaries into a controlled environment still needs the agent-in-the-loop mode below. |
 | #2b Tool-output injection | ⚠️ Detect-only | Detects injection strings served by the server; cannot confirm an orchestrator would act on them (no agent). |

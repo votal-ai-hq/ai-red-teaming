@@ -190,6 +190,10 @@ import { mcpPathTraversalModule } from "../attacks-mcp/mcp-path-traversal.js";
 import { mcpSsrfModule } from "../attacks-mcp/mcp-ssrf.js";
 import { mcpCrossTenantAccessModule } from "../attacks-mcp/mcp-cross-tenant-access.js";
 import { mcpDebugAccessModule } from "../attacks-mcp/mcp-debug-access.js";
+import { mcpToolShadowingModule } from "../attacks-mcp/mcp-tool-shadowing.js";
+import { mcpInsecureOutputModule } from "../attacks-mcp/mcp-insecure-output.js";
+import { mcpAuthAudienceModule } from "../attacks-mcp/mcp-auth-audience.js";
+import { mcpRugPullModule } from "../attacks-mcp/mcp-rug-pull.js";
 import { buildAgentLoopAttacks } from "../attacks-mcp/mcp-agent-loop-attacks.js";
 import { apiSpecificAttackModule } from "../attacks/api-specific-attack.js";
 import { sandboxEscapeModule } from "../attacks/sandbox-escape.js";
@@ -386,6 +390,10 @@ export const MCP_MODULES: AttackModule[] = [
   mcpSsrfModule,
   mcpCrossTenantAccessModule,
   mcpDebugAccessModule,
+  mcpToolShadowingModule,
+  mcpInsecureOutputModule,
+  mcpAuthAudienceModule,
+  mcpRugPullModule,
 ];
 
 /**
