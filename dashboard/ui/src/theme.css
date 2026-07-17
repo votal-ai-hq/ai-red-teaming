@@ -171,12 +171,30 @@
     border-color: #ddd !important;
     break-inside: avoid;
   }
-  /* Ensure all text is visible */
-  .truncate, .line-clamp-2, .line-clamp-6 {
+  /* Ensure all clamped/truncated text is fully visible in the PDF */
+  .truncate, [class*="line-clamp-"] {
     overflow: visible !important;
     white-space: normal !important;
     -webkit-line-clamp: unset !important;
     text-overflow: unset !important;
+  }
+  /* Repeat the findings-table header on every page and keep each row intact so
+     the table flows cleanly across pages instead of breaking mid-row. */
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  /* Don't strand a section heading at the bottom of a page. */
+  h1, h2, h3, h4 {
+    break-after: avoid;
+  }
+  /* Tighten vertical rhythm so the report packs into fewer pages. */
+  .space-y-4 > * + *,
+  .space-y-5 > * + *,
+  .space-y-6 > * + * {
+    margin-top: 0.5rem !important;
   }
   body {
     font-size: 11px;
@@ -185,7 +203,7 @@
   }
   /* Page margins */
   @page {
-    margin: 1.2cm;
+    margin: 1cm;
     size: A4;
   }
 }

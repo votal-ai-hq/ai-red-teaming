@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getReportsMeta, getReport } from "@/api/reports";
 import { analyzeRisk } from "@/api/risk";
 import { useNDJSONStream } from "@/hooks/useNDJSONStream";
+import { useRiskStore } from "@/stores/riskStore";
 import type {
   ReportMeta,
   FullReport,
@@ -138,10 +139,18 @@ export default function RiskPage() {
   const [reportSearch, setReportSearch] = useState("");
   const [reports, setReports] = useState<ReportMeta[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedFile, setSelectedFile] = useState<string>("");
+  // Selected report + generated analyses live in a store so they survive
+  // navigating away from this page and back within the same session.
+  const selectedFile = useRiskStore((s) => s.selectedFile);
+  const setSelectedFile = useRiskStore((s) => s.setSelectedFile);
+  const analyses = useRiskStore((s) => s.analyses);
+  const setAnalysis = useRiskStore((s) => s.setAnalysis);
   const [fullReport, setFullReport] = useState<FullReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Which report the in-flight/just-finished stream belongs to, so we never
+  // display or persist one report's analysis against another.
+  const analyzedFileRef = useRef<string>("");
 
   const {
     data: riskResults,
@@ -149,6 +158,14 @@ export default function RiskPage() {
     error: streamError,
     start,
   } = useNDJSONStream<RiskAnalysisResult>();
+
+  // Persist a completed analysis to the store, keyed by the report it ran
+  // against — this is what lets it survive unmount/remount.
+  useEffect(() => {
+    if (!isStreaming && riskResults.length > 0 && analyzedFileRef.current) {
+      setAnalysis(analyzedFileRef.current, riskResults);
+    }
+  }, [isStreaming, riskResults, setAnalysis]);
 
   /* Fetch reports list */
   useEffect(() => {
@@ -188,9 +205,10 @@ export default function RiskPage() {
         findings: res.findings ?? [],
       }))
     );
+    analyzedFileRef.current = selectedFile;
     const response = await analyzeRisk(attacks);
     start(response);
-  }, [fullReport, start]);
+  }, [fullReport, selectedFile, start]);
 
   if (loading) {
     return (
@@ -226,6 +244,15 @@ export default function RiskPage() {
   const sortedRemediationKeys = Object.keys(remediationGroups).sort(
     (a, b) => severityPriority(a) - severityPriority(b)
   );
+
+  /* AI analysis to show: the live stream when it belongs to the selected
+     report, otherwise the persisted analysis for that report (if any). */
+  const liveForSelected =
+    analyzedFileRef.current === selectedFile &&
+    (isStreaming || riskResults.length > 0);
+  const displayResults = liveForSelected
+    ? riskResults
+    : analyses[selectedFile] ?? [];
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -537,9 +564,9 @@ export default function RiskPage() {
                 </div>
               )}
 
-              {riskResults.length > 0 ? (
+              {displayResults.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {riskResults.map((result, i) => (
+                  {displayResults.map((result, i) => (
                     <div
                       key={`${result.attack}-${i}`}
                       className="border border-border rounded-lg p-4 space-y-2 bg-muted/30 dark:bg-muted/10"
