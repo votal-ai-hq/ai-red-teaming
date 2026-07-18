@@ -39,10 +39,16 @@ export interface DatasetPreset {
   count?: number;
   /** Minimum rows per category (balance floor). */
   perCategoryFloor?: number;
-  /** NIM model id used for LLM columns. */
+  /** Model id used for LLM columns (e.g. "meta/llama-3.3-70b-instruct", "gpt-4o-mini"). */
   generationModel?: string;
   /** Model alias registered with Data Designer for the generation model. */
   modelAlias?: string;
+  /**
+   * Data Designer model provider backing the generation model. Data Designer
+   * is not NVIDIA-locked — it also supports OpenAI and other providers.
+   * Common values: "nim" (default), "openai". Default: "nim".
+   */
+  provider?: string;
 }
 
 /** Optional seed inputs (Phase 2: derived from CodebaseAnalysis). */

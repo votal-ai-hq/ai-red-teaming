@@ -107,6 +107,24 @@ describe("buildDataDesignerConfig", () => {
     const cat = config.columns.find((c) => c.name === "category");
     expect(cat && "values" in cat && cat.values).toEqual(["tool_misuse"]);
   });
+
+  it("defaults to the nim provider", () => {
+    const config = buildDataDesignerConfig({ family: "mcp" });
+    expect(config.modelProvider).toBe("nim");
+    expect(config.modelConfigs[0].provider).toBe("nim");
+  });
+
+  it("propagates an OpenAI provider + model from the preset", () => {
+    const config = buildDataDesignerConfig({
+      family: "mcp",
+      provider: "openai",
+      generationModel: "gpt-4o-mini",
+    });
+    expect(config.modelProvider).toBe("openai");
+    expect(config.modelConfigs).toEqual([
+      { alias: "generator", model: "gpt-4o-mini", provider: "openai" },
+    ]);
+  });
 });
 
 describe("recordToRow", () => {

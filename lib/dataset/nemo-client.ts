@@ -8,8 +8,9 @@
  *   NEMO_DATA_DESIGNER_URL   base url (default http://localhost:8080)
  *   NEMO_PREVIEW_PATH        default /v1/data-designer/preview
  *   NEMO_GENERATE_PATH       default /v1/data-designer/jobs
- *   NVIDIA_API_KEY           bearer for NIM-backed generation (reused from the
- *                            existing `nim` provider — no new credential surface)
+ *   API key (bearer): the first set of NEMO_API_KEY, NVIDIA_API_KEY (NIM), or
+ *                     OPENAI_API_KEY — Data Designer is not NVIDIA-locked and
+ *                     also backs generation with OpenAI (and other providers).
  *
  * This module is deliberately thin and network-only; all validation/writing
  * lives in `validate.ts` so it can be tested without a running service.
@@ -42,7 +43,11 @@ export class NemoDataDesignerClient {
       process.env.NEMO_DATA_DESIGNER_URL ??
       "http://localhost:8080"
     ).replace(/\/+$/, "");
-    this.apiKey = opts.apiKey ?? process.env.NVIDIA_API_KEY;
+    this.apiKey =
+      opts.apiKey ??
+      process.env.NEMO_API_KEY ??
+      process.env.NVIDIA_API_KEY ??
+      process.env.OPENAI_API_KEY;
     this.previewPath =
       opts.previewPath ??
       process.env.NEMO_PREVIEW_PATH ??

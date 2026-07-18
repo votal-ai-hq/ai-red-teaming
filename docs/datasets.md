@@ -31,16 +31,26 @@ The generator is **out-of-band**: a Data Designer outage can never break a scan.
 ## One-time: bring up Data Designer
 
 Run the Data Designer microservice (Docker Compose dev deployment per NVIDIA's
-docs) and export credentials. The generator reuses the same NIM credentials as
-the built-in `nim` provider — no new secrets:
+docs) and export credentials. Data Designer is **not NVIDIA-locked** — it can
+back generation with NIM *or* OpenAI (and other providers). Set the API key for
+whichever provider your preset uses; the client picks the first of
+`NEMO_API_KEY`, `NVIDIA_API_KEY`, `OPENAI_API_KEY`:
 
 ```bash
+# NIM-backed (default presets, provider: "nim")
 export NVIDIA_API_KEY=nvapi-...
+# — or — OpenAI-backed (provider: "openai", e.g. nemo-mcp-openai.preset.json)
+export OPENAI_API_KEY=sk-...
+
 export NEMO_DATA_DESIGNER_URL=http://localhost:8080   # default
 # optional, if your DD version differs:
 # export NEMO_PREVIEW_PATH=/v1/data-designer/preview
 # export NEMO_GENERATE_PATH=/v1/data-designer/jobs
 ```
+
+The generation provider + model live in the preset (`provider`,
+`generationModel`). `configs/datasets/nemo-mcp-openai.preset.json` is a ready
+OpenAI-backed variant.
 
 ## Generate a dataset
 

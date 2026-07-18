@@ -271,7 +271,9 @@ export function DatasetsPage() {
             Writes to{" "}
             <code>data/datasets/nemo-{family}/{outName || "v1"}.json</code>.
             Requires the NeMo Data Designer service to be reachable
-            (<code>NEMO_DATA_DESIGNER_URL</code>) and <code>NVIDIA_API_KEY</code>.
+            (<code>NEMO_DATA_DESIGNER_URL</code>) and a provider API key
+            (<code>NVIDIA_API_KEY</code> for NIM or <code>OPENAI_API_KEY</code>{" "}
+            for OpenAI).
           </p>
 
           {error && (

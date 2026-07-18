@@ -28,6 +28,7 @@ const DEFAULT_SURFACES = [
 ];
 const DEFAULT_MODEL = "meta/llama-3.3-70b-instruct";
 const DEFAULT_ALIAS = "generator";
+const DEFAULT_PROVIDER = "nim";
 
 export interface SamplerColumn {
   type: "sampler";
@@ -57,10 +58,20 @@ export type DataDesignerColumn =
   | LlmTextColumn
   | LlmStructuredColumn;
 
+export interface ModelConfig {
+  alias: string;
+  model: string;
+  /** Provider backing the model (e.g. "nim", "openai"). */
+  provider: string;
+}
+
 export interface DataDesignerConfig {
   version: 1;
   model: string;
   modelAlias: string;
+  modelProvider: string;
+  /** Model configs Data Designer resolves aliases against. */
+  modelConfigs: ModelConfig[];
   count: number;
   columns: DataDesignerColumn[];
   validators: { name: string; kind: string; detail: string }[];
@@ -116,6 +127,7 @@ export function buildDataDesignerConfig(
     (preset.family === "mcp" ? DEFAULT_SURFACES : ["the assistant"]);
   const model = preset.generationModel ?? DEFAULT_MODEL;
   const modelAlias = preset.modelAlias ?? DEFAULT_ALIAS;
+  const provider = preset.provider ?? DEFAULT_PROVIDER;
   const count = preset.count ?? 300;
 
   const samplers: SamplerColumn[] = [
@@ -153,6 +165,8 @@ export function buildDataDesignerConfig(
     version: 1,
     model,
     modelAlias,
+    modelProvider: provider,
+    modelConfigs: [{ alias: modelAlias, model, provider }],
     count,
     columns: [...samplers, promptCol, successCol],
     validators: [

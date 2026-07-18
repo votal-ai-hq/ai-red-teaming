@@ -3,7 +3,7 @@
     "baseUrl": "https://YOUR-ENDPOINT-HERE.example.com",
     "agentEndpoint": "/v1/chat/completions",
     "codebasePath": "../your-agent-app",
-    "applicationDetails": "In-run (tight) generation: this run analyzes the target codebase, generates a NeMo Data Designer dataset seeded from that analysis, and executes it in the same pass. Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + NVIDIA_API_KEY. Generation failure is non-fatal — the run continues with any file-based custom attacks. For reproducible datasets, prefer the offline flow: npm run gen:dataset.",
+    "applicationDetails": "In-run (tight) generation: this run analyzes the target codebase, generates a NeMo Data Designer dataset seeded from that analysis, and executes it in the same pass. Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider API key (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI). Generation failure is non-fatal — the run continues with any file-based custom attacks. For reproducible datasets, prefer the offline flow: npm run gen:dataset.",
     "policyFile": "policies/mcp-strict.json",
     "customApiTemplate": {
       "headers": { "Content-Type": "application/json" },

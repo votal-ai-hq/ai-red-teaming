@@ -1560,7 +1560,8 @@ const server = createServer(
 
     // API: generate a dataset via NeMo Data Designer.
     // Body: { preset: string, count?: number, out: string, seedFromAnalysisConfig?: object }
-    // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + NVIDIA_API_KEY.
+    // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider
+    // API key (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).
     if (url.pathname === "/api/datasets/generate" && req.method === "POST") {
       const clientIp =
         req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
@@ -1696,7 +1697,7 @@ const server = createServer(
           JSON.stringify({
             error: "dataset generation failed",
             detail: formatErrorDetails(err),
-            hint: "Ensure the NeMo Data Designer service is reachable (NEMO_DATA_DESIGNER_URL) and NVIDIA_API_KEY is set.",
+            hint: "Ensure the NeMo Data Designer service is reachable (NEMO_DATA_DESIGNER_URL) and a provider API key is set (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).",
           }),
         );
       }
