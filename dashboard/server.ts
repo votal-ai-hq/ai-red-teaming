@@ -28,6 +28,9 @@ import { runRedTeam, MCP_MODULES, type RunProgress } from "../lib/run.js";
 import { formatErrorDetails } from "../lib/error-utils.js";
 import { listDatasets } from "../lib/dataset/list.js";
 import { groupEvalRuns } from "../lib/dataset/eval-trends.js";
+import { seedsFromAnalysis } from "../lib/dataset/seed-from-analysis.js";
+import { analyzeCodebase } from "../lib/codebase-analyzer.js";
+import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { recordsToRows } from "../lib/dataset/map-records.js";
@@ -1578,6 +1581,7 @@ const server = createServer(
           preset?: string;
           count?: number;
           out?: string;
+          seedConfigPath?: string;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1617,7 +1621,41 @@ const server = createServer(
           return;
         }
 
-        const ddConfig = buildDataDesignerConfig(preset);
+        // Optional: seed generation from a target's white-box analysis so the
+        // dataset is tailored to its tool graph / roles / MCP surface.
+        let seeds: DatasetSeeds | undefined;
+        let seedInfo: { roles: number; surfaces: number } | undefined;
+        if (body.seedConfigPath) {
+          const seedCfgAbs = resolvePath(repoRoot, body.seedConfigPath);
+          if (
+            !seedCfgAbs.startsWith(join(repoRoot, "configs")) ||
+            !seedCfgAbs.endsWith(".json")
+          ) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "seedConfigPath must be a .json under configs/",
+              }),
+            );
+            return;
+          }
+          if (!existsSync(seedCfgAbs)) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({ error: `seed config not found: ${body.seedConfigPath}` }),
+            );
+            return;
+          }
+          const seedCfg = loadConfig(seedCfgAbs);
+          const analysis = await analyzeCodebase(seedCfg);
+          seeds = seedsFromAnalysis(analysis);
+          seedInfo = {
+            roles: seeds.roles?.length ?? 0,
+            surfaces: seeds.surfaces?.length ?? 0,
+          };
+        }
+
+        const ddConfig = buildDataDesignerConfig(preset, seeds);
         const client = new NemoDataDesignerClient();
         const records = await client.generate(ddConfig, preset.count);
         const rows = recordsToRows(records, preset.family);
@@ -1648,6 +1686,7 @@ const server = createServer(
             duplicatesDropped,
             histogram,
             summary: formatHistogram(histogram),
+            ...(seedInfo ? { seeds: seedInfo } : {}),
           }),
         );
       } catch (err) {

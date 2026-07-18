@@ -133,8 +133,11 @@ The dashboard exposes datasets as a first-class surface:
 
 - **Datasets tab** — lists every dataset under `data/datasets/**` with row count,
   family, and top categories, and has a "Generate" form (family + row count +
-  version name) that calls the generator. Generation requires the Data Designer
-  service to be reachable.
+  version name) that calls the generator. The optional **Seed from target
+  analysis** field takes a scan config path (under `configs/`, with a
+  `codebasePath`); the target is analyzed and generation is seeded from its
+  discovered tools/roles/MCP surface for target-tailored attacks. Generation
+  requires the Data Designer service to be reachable.
 - **Launch Scan → Evaluation Dataset** — pick a generated dataset as the scan's
   attack set (`customAttacksFile`), and optionally toggle **Dataset-only
   (regression eval)** (`customAttacksOnly`) for a reproducible run.

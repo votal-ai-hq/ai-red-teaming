@@ -116,6 +116,7 @@ export function DatasetsPage() {
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
+  const [seedConfigPath, setSeedConfigPath] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -149,9 +150,15 @@ export function DatasetsPage() {
         preset: PRESETS[family],
         out: `data/datasets/nemo-${family}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
         count,
+        ...(seedConfigPath.trim()
+          ? { seedConfigPath: seedConfigPath.trim() }
+          : {}),
       });
+      const seedNote = res.seeds
+        ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
+        : "";
       setOk(
-        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)`,
+        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}`,
       );
       await refresh();
     } catch (e) {
@@ -241,6 +248,24 @@ export function DatasetsPage() {
               )}
               Generate
             </Button>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="seedConfig">
+              Seed from target analysis (optional)
+            </Label>
+            <Input
+              id="seedConfig"
+              className="w-full max-w-xl"
+              value={seedConfigPath}
+              onChange={(e) => setSeedConfigPath(e.target.value)}
+              placeholder="configs/config-nemo-inrun.example.json"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Path (under <code>configs/</code>) to a scan config with a{" "}
+              <code>codebasePath</code>. The target is analyzed and generation is
+              seeded from its discovered tools, roles, and MCP surface — producing
+              attacks tailored to that target. Leave blank for a generic dataset.
+            </p>
           </div>
           <p className="text-xs text-muted-foreground">
             Writes to{" "}

@@ -13,6 +13,8 @@ export interface GenerateDatasetRequest {
   preset: string;
   out: string;
   count?: number;
+  /** Optional: config (under configs/) whose codebase analysis seeds generation. */
+  seedConfigPath?: string;
 }
 
 export interface GenerateDatasetResponse {
@@ -21,6 +23,8 @@ export interface GenerateDatasetResponse {
   duplicatesDropped: number;
   histogram: Record<string, number>;
   summary: string;
+  /** Present when seedConfigPath was used. */
+  seeds?: { roles: number; surfaces: number };
 }
 
 export function listDatasets() {
