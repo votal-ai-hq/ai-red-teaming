@@ -79,6 +79,29 @@ npm start configs/config-nemo-mcp-eval.example.json
 Swap `customAttacksFile` to your generated `v1.json` (or the directory, to load
 every pack in it). Reports land in `report/` exactly as for any other run.
 
+## Target-tailored generation (seed from source)
+
+Generic datasets are useful, but the platform's edge is white-box knowledge. You
+can seed generation from a real target's discovered tool graph, roles, and MCP
+surface so the synthetic attacks reference *your* tools and chains.
+
+```bash
+# 1. Analyze the target (needs a config with codebasePath) and dump the analysis
+npm run analyze:dump -- config.mytarget.json --out analysis.json
+
+# 2. Generate, seeded from that analysis
+npm run gen:dataset -- \
+  --preset configs/datasets/nemo-mcp.preset.json \
+  --from-analysis analysis.json \
+  --out data/datasets/nemo-mcp/mytarget-v1.json --count 400
+```
+
+Precedence for role/surface seeds: `--seed` (explicit `{roles,surfaces}` JSON) >
+`--from-analysis` (derived) > preset placeholders > built-in defaults. When
+seeds are supplied they **replace** the preset's generic surfaces, so the
+tailored values actually drive generation. `--seed` and `--from-analysis` are
+unioned when both are given.
+
 ## Row schema
 
 Rows use the exact shape the loader already accepts:

@@ -22,7 +22,9 @@ import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { recordsToRows } from "../lib/dataset/map-records.js";
 import { validateRows, formatHistogram, underFloor } from "../lib/dataset/validate.js";
 import { resolveCategoryPool } from "../lib/dataset/category-set.js";
+import { seedsFromAnalysis, mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
 import type { DatasetPreset, DatasetSeeds } from "../lib/dataset/types.js";
+import type { CodebaseAnalysis } from "../lib/types.js";
 
 interface Args {
   family?: string;
@@ -31,6 +33,7 @@ interface Args {
   count?: number;
   preview: boolean;
   seed?: string;
+  fromAnalysis?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -44,6 +47,7 @@ function parseArgs(argv: string[]): Args {
       case "--out": a.out = next(); break;
       case "--count": a.count = Number(next()); break;
       case "--seed": a.seed = next(); break;
+      case "--from-analysis": a.fromAnalysis = next(); break;
       case "--preview": a.preview = true; break;
       case "-h": case "--help": printHelpAndExit(); break;
       default:
@@ -62,6 +66,8 @@ function printHelpAndExit(code = 0): never {
       `  --out <file.json>        output dataset path (required unless --preview)\n` +
       `  --count <n>              override row count from preset\n` +
       `  --seed <file.json>       optional {roles,surfaces} seed inputs\n` +
+      `  --from-analysis <file>   CodebaseAnalysis JSON (see npm run analyze:dump)\n` +
+      `                           to derive target-tailored role/surface seeds\n` +
       `  --preview                fetch a small preview batch, print, do not write\n`,
   );
   process.exit(code);
@@ -91,9 +97,21 @@ async function main(): Promise<void> {
     throw new Error(`preset.family must be "mcp" or "agent" (got "${preset.family}")`);
   }
 
-  const seeds: DatasetSeeds | undefined = args.seed
+  // Seeds: explicit --seed takes priority, unioned with seeds derived from a
+  // CodebaseAnalysis (--from-analysis) for target-tailored generation.
+  const explicitSeeds: DatasetSeeds | undefined = args.seed
     ? loadJson<DatasetSeeds>(args.seed)
     : undefined;
+  const analysisSeeds: DatasetSeeds | undefined = args.fromAnalysis
+    ? seedsFromAnalysis(loadJson<CodebaseAnalysis>(args.fromAnalysis))
+    : undefined;
+  const seeds = mergeSeeds(explicitSeeds, analysisSeeds);
+  if (analysisSeeds) {
+    console.log(
+      `[gen] analysis seeds: roles=${analysisSeeds.roles?.length ?? 0} ` +
+        `surfaces=${analysisSeeds.surfaces?.length ?? 0}`,
+    );
+  }
 
   // Resolve pool early so a bad preset fails before any network call.
   const pool = resolveCategoryPool(preset.family, preset.categories);

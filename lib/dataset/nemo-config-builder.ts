@@ -105,10 +105,14 @@ export function buildDataDesignerConfig(
 ): DataDesignerConfig {
   const categories = resolveCategoryPool(preset.family, preset.categories);
   const severities = preset.severities ?? DEFAULT_SEVERITIES;
-  const roles = preset.roles ?? seeds?.roles ?? DEFAULT_ROLES;
+  // Seeds represent the *actual* target (from --seed / --from-analysis) and take
+  // priority over the preset's generic placeholders, which are the from-scratch
+  // fallback. Otherwise --from-analysis would be silently ignored whenever a
+  // preset defines roles/surfaces.
+  const roles = seeds?.roles ?? preset.roles ?? DEFAULT_ROLES;
   const surfaces =
-    preset.surfaces ??
     seeds?.surfaces ??
+    preset.surfaces ??
     (preset.family === "mcp" ? DEFAULT_SURFACES : ["the assistant"]);
   const model = preset.generationModel ?? DEFAULT_MODEL;
   const modelAlias = preset.modelAlias ?? DEFAULT_ALIAS;
