@@ -27,6 +27,7 @@ import {
 import { runRedTeam, MCP_MODULES, type RunProgress } from "../lib/run.js";
 import { formatErrorDetails } from "../lib/error-utils.js";
 import { listDatasets } from "../lib/dataset/list.js";
+import { groupEvalRuns } from "../lib/dataset/eval-trends.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { recordsToRows } from "../lib/dataset/map-records.js";
@@ -778,6 +779,16 @@ async function startJob(job: Job): Promise<void> {
             const report = generateReport(
               describeTarget(job.config),
               [{ round: 1, results: attackResults }],
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              job.config.customAttacksFile
+                ? {
+                    file: job.config.customAttacksFile,
+                    only: job.config.attackConfig.customAttacksOnly === true,
+                  }
+                : undefined,
             );
             job.report = report;
             if (isDbConfigured() && job.tenantId) {
@@ -1492,6 +1503,41 @@ const server = createServer(
       } catch {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end("[]");
+      }
+      return;
+    }
+
+    // API: eval runs grouped by dataset (score over time / regression tracking)
+    if (url.pathname === "/api/eval-runs" && req.method === "GET") {
+      try {
+        const reports = listFileReportMetas()
+          .map((meta) => {
+            try {
+              const raw = readFileSync(
+                join(REPORT_DIR, meta.filename),
+                "utf-8",
+              );
+              const data = JSON.parse(raw) as {
+                dataset?: { file: string; only: boolean };
+              };
+              return {
+                filename: meta.filename,
+                timestamp: meta.timestamp,
+                score: meta.score,
+                targetUrl: meta.targetUrl,
+                dataset: data.dataset,
+              };
+            } catch {
+              return null;
+            }
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== null);
+        const trends = groupEvalRuns(reports);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ trends }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
       }
       return;
     }

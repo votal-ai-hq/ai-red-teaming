@@ -1681,6 +1681,12 @@ export async function runRedTeam(
         config.target.infra?.aiModel?.provider ??
         config.attackConfig.llmProvider,
     },
+    config.customAttacksFile
+      ? {
+          file: config.customAttacksFile,
+          only: config.attackConfig.customAttacksOnly === true,
+        }
+      : undefined,
   );
   // Skip file write when DB is configured (server stores to DB instead)
   let jsonPath = "";

@@ -2,8 +2,11 @@ import { useState, useEffect } from "react";
 import {
   listDatasets,
   generateDataset,
+  listEvalRuns,
   type DatasetSummary,
+  type EvalTrend,
 } from "@/api/datasets";
+import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +20,10 @@ import {
   Sparkles,
   AlertTriangle,
   CheckCircle2,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  LineChart,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -31,8 +38,80 @@ function topCategories(hist: Record<string, number>, n = 4): string[] {
     .map(([c, k]) => `${c} (${k})`);
 }
 
+/** Minimal dependency-free score sparkline (0–100 scale). */
+function Sparkline({ scores }: { scores: number[] }) {
+  const w = 120;
+  const h = 28;
+  const pad = 2;
+  if (scores.length === 0) return null;
+  if (scores.length === 1) {
+    const y = h - pad - (scores[0] / 100) * (h - 2 * pad);
+    return (
+      <svg width={w} height={h} role="img" aria-label={`Score ${scores[0]}`}>
+        <circle cx={w / 2} cy={y} r={2.5} className="fill-primary" />
+      </svg>
+    );
+  }
+  const step = (w - 2 * pad) / (scores.length - 1);
+  const pts = scores.map((s, i) => {
+    const x = pad + i * step;
+    const y = h - pad - (s / 100) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return (
+    <svg
+      width={w}
+      height={h}
+      role="img"
+      aria-label={`Score trend: ${scores.join(", ")}`}
+    >
+      <polyline
+        points={pts.join(" ")}
+        fill="none"
+        strokeWidth={1.5}
+        className="stroke-primary"
+      />
+      <circle
+        cx={pts[pts.length - 1].split(",")[0]}
+        cy={pts[pts.length - 1].split(",")[1]}
+        r={2.5}
+        className="fill-primary"
+      />
+    </svg>
+  );
+}
+
+function DeltaBadge({ delta }: { delta: number }) {
+  if (delta === 0)
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Minus className="w-3 h-3" /> 0
+      </span>
+    );
+  const up = delta > 0;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-medium ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+    >
+      {up ? (
+        <TrendingUp className="w-3 h-3" />
+      ) : (
+        <TrendingDown className="w-3 h-3" />
+      )}
+      {up ? "+" : ""}
+      {delta}
+    </span>
+  );
+}
+
+function datasetLabel(path: string): string {
+  return path.replace(/^data\/datasets\//, "");
+}
+
 export function DatasetsPage() {
+  const navigate = useNavigate();
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [trends, setTrends] = useState<EvalTrend[]>([]);
   const [loading, setLoading] = useState(true);
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
   const [count, setCount] = useState(200);
@@ -44,8 +123,12 @@ export function DatasetsPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const res = await listDatasets();
-      setDatasets(res.datasets);
+      const [ds, tr] = await Promise.all([
+        listDatasets(),
+        listEvalRuns().catch(() => ({ trends: [] as EvalTrend[] })),
+      ]);
+      setDatasets(ds.datasets);
+      setTrends(tr.trends);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -180,6 +263,77 @@ export function DatasetsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Score over time (regression tracking) */}
+      {trends.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <LineChart className="w-4 h-4 text-primary" />
+              Eval score over time
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Runs grouped by dataset. An eval is a scan whose attack set is a
+              dataset — click a run to open its report.
+            </p>
+            {trends.map((t) => (
+              <div
+                key={t.dataset}
+                className="rounded-lg border border-border p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <code className="text-xs text-foreground break-all">
+                    {datasetLabel(t.dataset)}
+                  </code>
+                  <div className="flex items-center gap-4">
+                    <Sparkline scores={t.runs.map((r) => r.score)} />
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-foreground">
+                        {t.latestScore}
+                        <span className="text-xs text-muted-foreground">
+                          /100
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 justify-end">
+                        <span className="text-[10px] text-muted-foreground">
+                          {t.runs.length} run{t.runs.length === 1 ? "" : "s"}
+                        </span>
+                        {t.runs.length > 1 && <DeltaBadge delta={t.totalDelta} />}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {t.runs.map((r) => (
+                    <button
+                      key={r.filename}
+                      type="button"
+                      onClick={() => navigate(`/reports/${r.filename}`)}
+                      title={`${r.timestamp} — score ${r.score}${r.only ? " (dataset-only)" : ""}`}
+                      className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:border-primary hover:text-foreground transition-colors"
+                    >
+                      {r.score}
+                      {r.delta !== undefined && r.delta !== 0 && (
+                        <span
+                          className={
+                            r.delta > 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-red-600 dark:text-red-400"
+                          }
+                        >
+                          {r.delta > 0 ? "▲" : "▼"}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* List */}
       <Card>

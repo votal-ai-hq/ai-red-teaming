@@ -33,3 +33,25 @@ export function generateDataset(body: GenerateDatasetRequest) {
     body: JSON.stringify(body),
   });
 }
+
+export interface EvalRunPoint {
+  filename: string;
+  timestamp: string;
+  score: number;
+  targetUrl: string;
+  only: boolean;
+  delta?: number;
+}
+
+export interface EvalTrend {
+  dataset: string;
+  runs: EvalRunPoint[];
+  latestScore: number;
+  totalDelta: number;
+  minScore: number;
+  maxScore: number;
+}
+
+export function listEvalRuns() {
+  return apiFetch<{ trends: EvalTrend[] }>("/api/eval-runs");
+}

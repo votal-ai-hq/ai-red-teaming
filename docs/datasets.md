@@ -140,10 +140,16 @@ The dashboard exposes datasets as a first-class surface:
   (regression eval)** (`customAttacksOnly`) for a reproducible run.
 
 An evaluation is just a scan whose attack set is a dataset — results appear in
-the existing Reports / Risk / Compliance views, so score-over-time tracking uses
-the same reporting you already have.
+the existing Reports / Risk / Compliance views.
 
-Server endpoints: `GET /api/datasets`, `POST /api/datasets/generate`.
+**Score over time (regression tracking).** Each report records which dataset it
+ran (`report.dataset.file`). The Datasets tab groups runs by dataset and shows a
+score sparkline, per-run deltas, and the total change across the series — click
+any run to open its report. Re-run the same dataset after a model/guardrail
+change to see the score move.
+
+Server endpoints: `GET /api/datasets`, `POST /api/datasets/generate`,
+`GET /api/eval-runs` (trends grouped by dataset).
 
 ## Row schema
 

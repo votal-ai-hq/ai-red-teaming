@@ -842,6 +842,17 @@ export interface Report {
   targetUrl: string;
   /** Snapshot of target config for UI rendering (Attack Path graph, etc.). */
   target?: ReportTargetDescriptor;
+  /**
+   * Provenance of the eval dataset used for this run, when the run's attack set
+   * came from a `customAttacksFile`. Enables grouping runs by dataset to track
+   * score over time (regression tracking). Absent for planner-only scans.
+   */
+  dataset?: {
+    /** The customAttacksFile path (dataset identity for grouping). */
+    file: string;
+    /** Whether the run was dataset-only (customAttacksOnly). */
+    only: boolean;
+  };
   rounds: RoundResult[];
   summary: {
     totalAttacks: number;
