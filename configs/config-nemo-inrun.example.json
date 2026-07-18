@@ -1,0 +1,39 @@
+{
+  "target": {
+    "baseUrl": "https://YOUR-ENDPOINT-HERE.example.com",
+    "agentEndpoint": "/v1/chat/completions",
+    "codebasePath": "../your-agent-app",
+    "applicationDetails": "In-run (tight) generation: this run analyzes the target codebase, generates a NeMo Data Designer dataset seeded from that analysis, and executes it in the same pass. Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + NVIDIA_API_KEY. Generation failure is non-fatal — the run continues with any file-based custom attacks. For reproducible datasets, prefer the offline flow: npm run gen:dataset.",
+    "policyFile": "policies/mcp-strict.json",
+    "customApiTemplate": {
+      "headers": { "Content-Type": "application/json" },
+      "bodyTemplate": "{\"model\": \"YOUR-MODEL\", \"messages\": [{\"role\": \"user\", \"content\": \"{{message}}\"}], \"max_tokens\": 512, \"temperature\": 0}",
+      "responsePath": "choices[0].message.content"
+    }
+  },
+  "requestSchema": { "messageField": "message", "roleField": "role" },
+  "responseSchema": {
+    "responsePath": "choices[0].message.content",
+    "toolCallsPath": "choices[0].message.tool_calls",
+    "userInfoPath": "",
+    "guardrailsPath": ""
+  },
+  "auth": { "methods": ["none"], "credentials": [], "apiKeys": {} },
+  "attackConfig": {
+    "adaptiveRounds": 1,
+    "concurrency": 2,
+    "enableLlmGeneration": false,
+    "includeSeedAttacks": false,
+    "customAttacksOnly": true,
+    "datasetGenerator": "nemo",
+    "datasetGeneratorConfig": {
+      "preset": "configs/datasets/nemo-mcp.preset.json",
+      "count": 60,
+      "seedFromAnalysis": true
+    },
+    "llmProvider": "openrouter",
+    "llmModel": "anthropic/claude-sonnet-4.5",
+    "judgeProvider": "openrouter",
+    "judgeModel": "anthropic/claude-sonnet-4.5"
+  }
+}

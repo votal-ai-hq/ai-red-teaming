@@ -102,6 +102,31 @@ seeds are supplied they **replace** the preset's generic surfaces, so the
 tailored values actually drive generation. `--seed` and `--from-analysis` are
 unioned when both are given.
 
+## In-run generation (tight coupling, optional)
+
+For a one-pass "analyze → generate → execute" run, set `datasetGenerator` in the
+config instead of generating a file first. The run analyzes the target, seeds a
+Data Designer dataset from that live analysis, and merges the rows into the
+run's attacks:
+
+```jsonc
+"attackConfig": {
+  "customAttacksOnly": true,
+  "datasetGenerator": "nemo",
+  "datasetGeneratorConfig": {
+    "preset": "configs/datasets/nemo-mcp.preset.json",
+    "count": 60,
+    "seedFromAnalysis": true
+  }
+}
+```
+
+See `configs/config-nemo-inrun.example.json`. This is **fail-soft**: if Data
+Designer is unreachable or produces no valid rows, the run logs a non-fatal
+notice and continues with any file-based custom attacks. For reproducible,
+diffable datasets prefer the offline `npm run gen:dataset` flow — the in-run
+hook is a convenience, not the recommended default.
+
 ## Row schema
 
 Rows use the exact shape the loader already accepts:

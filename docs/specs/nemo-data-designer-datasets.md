@@ -1,6 +1,6 @@
 # Spec: Synthetic Eval Datasets for Agents & MCP Servers via NeMo Data Designer
 
-**Status:** Phases 1–2 implemented (generator + presets + eval config + seeded-from-analysis + tests). Phase 3 (tight `datasetGenerator` config hook) pending. See [`docs/datasets.md`](../datasets.md) for usage.
+**Status:** Phases 1–3 implemented (offline generator + presets + eval config + seeded-from-analysis + in-run `datasetGenerator` hook + tests). See [`docs/datasets.md`](../datasets.md) for usage.
 **Branch:** `claude/eval-datasets-agents-mcp-xg64j9`
 **Author:** generated design spec
 **Scope:** Add a synthetic dataset-generation layer that uses NVIDIA NeMo Data Designer to produce attack/eval datasets for (a) agentic apps and (b) MCP servers, feeding the existing wb-red-team eval loop with zero changes to the executor or judge.
