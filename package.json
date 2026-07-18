@@ -42,6 +42,7 @@
     "demo": "tsx red-team.ts config-quick-test.json",
     "ai": "tsx scripts/ai-assistant.ts",
     "gen:interactive": "tsx scripts/gen-interactive.ts",
+    "gen:dataset": "tsx scripts/gen-dataset-nemo.ts",
     "dashboard:build": "cd dashboard/ui && npm run build",
     "dashboard:dev": "cd dashboard/ui && npm run dev",
     "dashboard": "npm run dashboard:build && tsx dashboard/server.ts 4200",
