@@ -127,6 +127,24 @@ notice and continues with any file-based custom attacks. For reproducible,
 diffable datasets prefer the offline `npm run gen:dataset` flow — the in-run
 hook is a convenience, not the recommended default.
 
+## Dashboard UI
+
+The dashboard exposes datasets as a first-class surface:
+
+- **Datasets tab** — lists every dataset under `data/datasets/**` with row count,
+  family, and top categories, and has a "Generate" form (family + row count +
+  version name) that calls the generator. Generation requires the Data Designer
+  service to be reachable.
+- **Launch Scan → Evaluation Dataset** — pick a generated dataset as the scan's
+  attack set (`customAttacksFile`), and optionally toggle **Dataset-only
+  (regression eval)** (`customAttacksOnly`) for a reproducible run.
+
+An evaluation is just a scan whose attack set is a dataset — results appear in
+the existing Reports / Risk / Compliance views, so score-over-time tracking uses
+the same reporting you already have.
+
+Server endpoints: `GET /api/datasets`, `POST /api/datasets/generate`.
+
 ## Row schema
 
 Rows use the exact shape the loader already accepts:

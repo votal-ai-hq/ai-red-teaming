@@ -9,6 +9,7 @@ import {
   CheckSquare,
   Shield,
   Briefcase,
+  Database,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -17,6 +18,7 @@ const MAIN_NAV = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/scans", label: "Scan Activity", icon: Play },
   { path: "/new-scan", label: "Launch Scan", icon: PlusCircle },
+  { path: "/datasets", label: "Datasets", icon: Database },
   { path: "/reports", label: "Reports", icon: FileText },
   { path: "/risk", label: "Risk", icon: AlertTriangle },
   { path: "/compliance", label: "Compliance", icon: CheckSquare },

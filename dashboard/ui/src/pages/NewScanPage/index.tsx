@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router";
 import { createRun } from "@/api/runs";
 import { getReference, discoverMcp } from "@/api/reference";
 import { apiFetch } from "@/api/client";
+import { listDatasets, type DatasetSummary } from "@/api/datasets";
 import type { ReferenceData, StrategyInfo, McpDiscoverResult } from "@/api/types";
 import {
   Card,
@@ -290,6 +291,11 @@ export default function NewScanPage() {
   const [uploadingPolicy, setUploadingPolicy] = useState(false);
   const [policyUploadError, setPolicyUploadError] = useState<string | null>(null);
 
+  // ── Evaluation dataset (customAttacksFile) ──
+  const [datasetFile, setDatasetFile] = useState("");
+  const [datasetOnly, setDatasetOnly] = useState(false);
+  const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([]);
+
   // ── UI state ──
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -306,6 +312,9 @@ export default function NewScanPage() {
       })
       .catch(() => setError("Failed to load reference data."))
       .finally(() => setRefLoading(false));
+    listDatasets()
+      .then((r) => setAvailableDatasets(r.datasets))
+      .catch(() => {});
   }, []);
 
   // If this instance disallows MCP stdio, never leave the form stuck on it.
@@ -543,8 +552,10 @@ export default function NewScanPage() {
         .map((s) => s.trim())
         .filter(Boolean),
       policyFile,
+      ...(datasetFile ? { customAttacksFile: datasetFile } : {}),
       attackConfig: {
         adaptiveRounds,
+        ...(datasetFile && datasetOnly ? { customAttacksOnly: true } : {}),
         maxAttacksPerCategory,
         concurrency,
         delayBetweenRequestsMs: delayMs,
@@ -1720,6 +1731,72 @@ export default function NewScanPage() {
                   className={inputCls}
                 />
               </FieldRow>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Evaluation Dataset" icon={FileText}>
+            <div className="space-y-4">
+              <FieldRow
+                label="Attack dataset"
+                hint="Run a generated NeMo dataset as the attack set (customAttacksFile). Manage datasets in the Datasets tab."
+              >
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDatasetFile("");
+                      setDatasetOnly(false);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      !datasetFile
+                        ? "bg-primary text-white border-primary shadow-sm"
+                        : "bg-card text-muted-foreground border-border hover:border-muted-foreground/30 hover:text-foreground"
+                    }`}
+                  >
+                    {!datasetFile && <CheckCircle className="w-3 h-3" />}
+                    None
+                  </button>
+                  {availableDatasets.map((d) => (
+                    <button
+                      key={d.path}
+                      type="button"
+                      onClick={() => setDatasetFile(d.path)}
+                      title={`${d.rowCount} rows — ${d.path}`}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        datasetFile === d.path
+                          ? "bg-primary text-white border-primary shadow-sm"
+                          : "bg-card text-muted-foreground border-border hover:border-muted-foreground/30 hover:text-foreground"
+                      }`}
+                    >
+                      {datasetFile === d.path && <CheckCircle className="w-3 h-3" />}
+                      {d.name} ({d.rowCount})
+                    </button>
+                  ))}
+                  {availableDatasets.length === 0 && (
+                    <span className="text-xs text-muted-foreground py-1.5">
+                      No datasets found — generate one in the Datasets tab.
+                    </span>
+                  )}
+                </div>
+              </FieldRow>
+
+              {datasetFile && (
+                <FieldRow
+                  label="Dataset-only (regression eval)"
+                  hint="Run ONLY the dataset cases — skip the planner and runtime generation. Reproducible for tracking score over time."
+                >
+                  <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={datasetOnly}
+                      onChange={(e) => setDatasetOnly(e.target.checked)}
+                    />
+                    <span className="text-muted-foreground">
+                      customAttacksOnly
+                    </span>
+                  </label>
+                </FieldRow>
+              )}
             </div>
           </CollapsibleSection>
         </div>

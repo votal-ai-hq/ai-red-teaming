@@ -17,6 +17,7 @@ import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { recordToRow } from "../lib/dataset/map-records.js";
 import { extractRecords } from "../lib/dataset/nemo-client.js";
 import { loadCustomAttacksFromConfig } from "../lib/custom-attacks-loader.js";
+import { listDatasets } from "../lib/dataset/list.js";
 import type { Config } from "../lib/types.js";
 
 describe("category-set", () => {
@@ -159,5 +160,20 @@ describe("fixture dataset round-trips through the real loader", () => {
       expect(isAttackCategory(a.category)).toBe(true);
       expect(a.payload.message).toBeTruthy();
     }
+  });
+});
+
+describe("listDatasets", () => {
+  it("summarizes committed datasets with counts + histogram + family", () => {
+    const found = listDatasets(resolve("."));
+    const fixture = found.find((d) => d.path.endsWith("nemo-mcp/fixture.json"));
+    expect(fixture).toBeTruthy();
+    expect(fixture!.family).toBe("mcp");
+    expect(fixture!.rowCount).toBeGreaterThan(0);
+    expect(Object.keys(fixture!.histogram).length).toBeGreaterThan(0);
+  });
+
+  it("returns [] when the datasets dir is absent", () => {
+    expect(listDatasets(resolve("./lib"))).toEqual([]);
   });
 });
