@@ -20,30 +20,74 @@ const DEFAULT_MODEL = "meta/llama-3.3-70b-instruct";
 const DEFAULT_ALIAS = "generator";
 const DEFAULT_PROVIDER = "nim";
 
-const INPUT_TEMPLATE = [
-  "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
-  "legitimate task the agent should handle correctly (not an attack).",
-  "",
-  "Task type: {{task}}",
-  "Graded on metric: {{metric}}",
-  "Acting as: {{role}}",
-  "Available surface: {{surface}}",
-  "",
-  "Write one realistic user request for this task. Output ONLY the user's",
-  "message — concrete and specific, no preamble.",
-].join("\n");
+/** A profile-derived context block, formatted as a prompt preamble (or ""). */
+function contextPreamble(context?: string): string {
+  if (!context || !context.trim()) return "";
+  return [
+    "",
+    "TARGET APPLICATION CONTEXT (tailor the case to this specific app):",
+    context.trim(),
+    "",
+  ].join("\n");
+}
 
-const REFERENCE_TEMPLATE = [
-  "Given this functional eval case, produce the grading reference.",
-  "",
-  "Task type: {{task}}",
-  "Metric: {{metric}}",
-  "User request: {{input}}",
-  "",
-  "Return: reference = the ideal correct answer (concise); expectedTools = a",
-  "JSON array of the tool name(s) a correct agent would call, in order (empty",
-  "array if the task needs no tools).",
-].join("\n");
+function inputTemplate(context?: string): string {
+  return [
+    "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
+    "legitimate task the agent should handle correctly (not an attack).",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Graded on metric: {{metric}}",
+    "Acting as: {{role}}",
+    "Available surface: {{surface}}",
+    "",
+    "Write one realistic user request for this task, specific to the target",
+    "application's domain and tools when context is given. Output ONLY the",
+    "user's message — concrete and specific, no preamble.",
+  ].join("\n");
+}
+
+function multiTurnInputTemplate(context?: string): string {
+  return [
+    "You are authoring a MULTI-TURN FUNCTIONAL evaluation case for an AI agent —",
+    "a legitimate {{turns}}-message task conversation (not an attack) where each",
+    "turn builds on the previous ones.",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Graded on metric: {{metric}}",
+    "Acting as: {{role}}",
+    "Available surface: {{surface}}",
+    "",
+    "Write a realistic conversation where the user completes this task across",
+    "turns — e.g. an initial request, then a refinement, added detail, or a",
+    "follow-up that depends on the earlier turns (testing context retention).",
+    "The FINAL turn is the one whose answer is graded against the reference.",
+    "Be specific to the target application's domain and tools when context is",
+    "given.",
+    "",
+    "Output EXACTLY {{turns}} lines, one per turn, each prefixed with its marker:",
+    "[Turn 1] <first user message>",
+    "[Turn 2] <builds on turn 1>",
+    "...",
+    "[Turn {{turns}}] <final message that completes the task>",
+    "",
+    "Output ONLY the [Turn N] lines — no preamble, no quotes, no explanation.",
+  ].join("\n");
+}
+
+function referenceTemplate(context?: string): string {
+  return [
+    "Given this functional eval case, produce the grading reference.",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Metric: {{metric}}",
+    "User request: {{input}}",
+    "",
+    "Return: reference = the ideal correct answer (concise); expectedTools = a",
+    "JSON array of the tool name(s) a correct agent would call, in order (empty",
+    "array if the task needs no tools).",
+  ].join("\n");
+}
 
 /**
  * Build a quality-dataset Data Designer config. Sampler columns (task, metric,
@@ -61,6 +105,7 @@ export function buildQualityDataDesignerConfig(
   const modelAlias = preset.modelAlias ?? DEFAULT_ALIAS;
   const provider = preset.provider ?? DEFAULT_PROVIDER;
   const count = preset.count ?? 300;
+  const multiTurn = preset.turnMode === "multi";
 
   const samplers: SamplerColumn[] = [
     { type: "sampler", name: "task", samplerType: "category", values: tasks },
@@ -68,19 +113,32 @@ export function buildQualityDataDesignerConfig(
     { type: "sampler", name: "role", samplerType: "category", values: roles },
     { type: "sampler", name: "surface", samplerType: "category", values: surfaces },
   ];
+  // Multi-turn: sample a turn count (2..maxTurns) the template renders as
+  // {{turns}}. The scorer replays the [Turn N] input turn-by-turn.
+  if (multiTurn) {
+    const maxTurns = Math.min(8, Math.max(2, preset.maxTurns ?? 3));
+    samplers.push({
+      type: "sampler",
+      name: "turns",
+      samplerType: "category",
+      values: Array.from({ length: maxTurns - 1 }, (_, i) => String(i + 2)),
+    });
+  }
 
   const inputCol: LlmTextColumn = {
     type: "llm-text",
     name: "input",
     modelAlias,
-    prompt: INPUT_TEMPLATE,
+    prompt: multiTurn
+      ? multiTurnInputTemplate(seeds?.context)
+      : inputTemplate(seeds?.context),
   };
 
   const refCol: LlmStructuredColumn = {
     type: "llm-structured",
     name: "grading",
     modelAlias,
-    prompt: REFERENCE_TEMPLATE,
+    prompt: referenceTemplate(seeds?.context),
     outputFields: [
       { name: "reference", description: "the ideal correct answer" },
       { name: "expectedTools", description: "JSON array of tool names a correct agent would call" },

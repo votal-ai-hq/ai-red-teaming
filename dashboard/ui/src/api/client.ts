@@ -29,7 +29,7 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`API error ${res.status}: ${text}`);
+    throw new Error(`API error ${res.status}: ${formatApiErrorBody(text)}`);
   }
 
   const contentType = res.headers.get("Content-Type") || "";
@@ -38,6 +38,23 @@ export async function apiFetch<T>(
   }
 
   return res.text() as unknown as T;
+}
+
+/**
+ * API errors arrive as JSON like { error, detail, hint, ... }. Flatten the
+ * human-readable fields into one line instead of showing the raw JSON blob.
+ */
+function formatApiErrorBody(text: string): string {
+  try {
+    const body = JSON.parse(text) as Record<string, unknown>;
+    const parts = ["error", "detail", "hint"]
+      .map((k) => body[k])
+      .filter((v): v is string => typeof v === "string" && v.length > 0);
+    if (parts.length > 0) return parts.join(" — ");
+  } catch {
+    // not JSON; fall through to the raw text
+  }
+  return text;
 }
 
 export function apiStream(

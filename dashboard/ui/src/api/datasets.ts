@@ -16,6 +16,81 @@ export interface GenerateDatasetRequest {
   count?: number;
   /** Optional: config (under configs/) whose codebase analysis seeds generation. */
   seedConfigPath?: string;
+  /** LLM provider backing generation (e.g. "nim", "openai"). */
+  provider?: string;
+  /** Model id for the chosen provider (e.g. "gpt-4o-mini"). */
+  generationModel?: string;
+  /** Name of a saved AppProfile to tailor generation. */
+  profileId?: string;
+  /** "single" (default) or "multi" — multi emits [Turn N] transcripts (security only). */
+  turnMode?: "single" | "multi";
+  /** Max turns for multi-turn generation (2..8). */
+  maxTurns?: number;
+}
+
+export interface GenerationProvider {
+  id: string;
+  label: string;
+  defaultModel: string;
+  suggestedModels: string[];
+  apiKeyEnv: string;
+  /** Whether the server has this provider's API key (or NEMO_API_KEY) set. */
+  keyConfigured: boolean;
+}
+
+export function listGenerationProviders() {
+  return apiFetch<{ providers: GenerationProvider[] }>(
+    "/api/datasets/providers",
+  );
+}
+
+// --- App profiles (tailor generation to a specific target app) ---
+
+export interface ProfileTool {
+  name: string;
+  description?: string;
+  sensitive?: boolean;
+}
+
+export interface AppProfile {
+  name: string;
+  description?: string;
+  systemPrompt?: string;
+  businessRules?: string[];
+  tools?: ProfileTool[];
+  roles?: string[];
+  dataClasses?: string[];
+  source?: string;
+}
+
+export interface ProfileSummary {
+  name: string;
+  description?: string;
+  source?: string;
+  toolCount: number;
+  ruleCount: number;
+  roleCount: number;
+}
+
+export type ImportFormat = "system-prompt" | "mcp-manifest" | "openapi";
+
+export function listProfiles() {
+  return apiFetch<{ profiles: ProfileSummary[] }>("/api/datasets/profiles");
+}
+
+/** Parse an artifact into a draft profile (not saved). */
+export function importProfile(format: ImportFormat, content: string) {
+  return apiFetch<{ profile: Partial<AppProfile> }>(
+    "/api/datasets/profiles/import",
+    { method: "POST", body: JSON.stringify({ format, content }) },
+  );
+}
+
+export function saveProfile(profile: AppProfile) {
+  return apiFetch<{ ok: true; path: string }>("/api/datasets/profiles", {
+    method: "POST",
+    body: JSON.stringify(profile),
+  });
 }
 
 export interface GenerateDatasetResponse {
@@ -26,6 +101,11 @@ export interface GenerateDatasetResponse {
   summary: string;
   /** Present when seedConfigPath was used. */
   seeds?: { roles: number; surfaces: number };
+  /** Present when a profileId / inline profile tailored generation. */
+  profile?: { name: string; tools: number; rules: number };
+  /** Present when multi-turn generation was used. */
+  turnMode?: "multi";
+  maxTurns?: number;
 }
 
 export function listDatasets() {

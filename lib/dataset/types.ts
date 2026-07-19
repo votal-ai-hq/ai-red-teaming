@@ -66,6 +66,15 @@ export interface DatasetPreset {
   roles?: string[];
   /** MCP surface elements (tool/prompt/resource names). Optional; falls back to seeds. */
   surfaces?: string[];
+  /**
+   * Conversation shape of generated attacks. "single" (default) produces a
+   * one-message attack; "multi" produces a [Turn N] escalation transcript the
+   * runtime replays turn-by-turn (see lib/custom-attacks-loader.ts). Multi-turn
+   * applies to security datasets only.
+   */
+  turnMode?: "single" | "multi";
+  /** Max conversation turns when turnMode="multi" (clamped to 2..8). Default 3. */
+  maxTurns?: number;
   /** Total rows to generate. */
   count?: number;
   /** Minimum rows per category (balance floor). */
@@ -82,10 +91,16 @@ export interface DatasetPreset {
   provider?: string;
 }
 
-/** Optional seed inputs (Phase 2: derived from CodebaseAnalysis). */
+/** Optional seed inputs (Phase 2: derived from CodebaseAnalysis or an AppProfile). */
 export interface DatasetSeeds {
   roles?: string[];
   surfaces?: string[];
+  /**
+   * App-context preamble injected into the generation prompt so generated
+   * attacks/grading reference the target's real domain, rules, and data.
+   * Populated from an AppProfile (see lib/dataset/app-profile.ts).
+   */
+  context?: string;
 }
 
 /** Result of validating a batch of rows. */

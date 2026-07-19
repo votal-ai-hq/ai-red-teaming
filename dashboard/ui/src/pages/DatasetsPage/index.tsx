@@ -3,9 +3,14 @@ import {
   listDatasets,
   generateDataset,
   listEvalRuns,
+  listGenerationProviders,
+  listProfiles,
   type DatasetSummary,
   type EvalTrend,
+  type GenerationProvider,
+  type ProfileSummary,
 } from "@/api/datasets";
+import { ProfileWizard } from "./ProfileWizard";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +29,7 @@ import {
   TrendingDown,
   Minus,
   LineChart,
+  Wand2,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -32,6 +38,26 @@ const PRESETS: Record<string, string> = {
   "quality-mcp": "configs/datasets/nemo-mcp-quality.preset.json",
   "quality-agent": "configs/datasets/nemo-agent-quality.preset.json",
 };
+
+/** Used until /api/datasets/providers answers (or if it's unavailable). */
+const FALLBACK_PROVIDERS: GenerationProvider[] = [
+  {
+    id: "nim",
+    label: "NVIDIA NIM",
+    defaultModel: "meta/llama-3.3-70b-instruct",
+    suggestedModels: ["meta/llama-3.3-70b-instruct"],
+    apiKeyEnv: "NVIDIA_API_KEY",
+    keyConfigured: true,
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    defaultModel: "gpt-4o-mini",
+    suggestedModels: ["gpt-4o-mini", "gpt-4o"],
+    apiKeyEnv: "OPENAI_API_KEY",
+    keyConfigured: true,
+  },
+];
 
 function topCategories(hist: Record<string, number>, n = 4): string[] {
   return Object.entries(hist)
@@ -117,8 +143,18 @@ export function DatasetsPage() {
   const [loading, setLoading] = useState(true);
   const [kind, setKind] = useState<"security" | "quality">("security");
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
+  const [providers, setProviders] = useState<GenerationProvider[]>(
+    FALLBACK_PROVIDERS,
+  );
+  const [providerId, setProviderId] = useState("nim");
+  const [model, setModel] = useState(FALLBACK_PROVIDERS[0].defaultModel);
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [profileId, setProfileId] = useState<string>("");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [turnMode, setTurnMode] = useState<"single" | "multi">("single");
+  const [maxTurns, setMaxTurns] = useState(3);
   const [seedConfigPath, setSeedConfigPath] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,12 +163,14 @@ export function DatasetsPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [ds, tr] = await Promise.all([
+      const [ds, tr, pr] = await Promise.all([
         listDatasets(),
         listEvalRuns().catch(() => ({ trends: [] as EvalTrend[] })),
+        listProfiles().catch(() => ({ profiles: [] as ProfileSummary[] })),
       ]);
       setDatasets(ds.datasets);
       setTrends(tr.trends);
+      setProfiles(pr.profiles);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -142,7 +180,25 @@ export function DatasetsPage() {
 
   useEffect(() => {
     refresh();
+    listGenerationProviders()
+      .then((r) => {
+        if (r.providers.length > 0) {
+          setProviders(r.providers);
+          setModel(
+            (m) => r.providers.find((p) => p.id === "nim")?.defaultModel ?? m,
+          );
+        }
+      })
+      .catch(() => {}); // older server without the endpoint — keep fallback
   }, []);
+
+  const provider =
+    providers.find((p) => p.id === providerId) ?? providers[0];
+
+  const selectProvider = (p: GenerationProvider) => {
+    setProviderId(p.id);
+    setModel(p.defaultModel);
+  };
 
   const onGenerate = async () => {
     setGenerating(true);
@@ -154,6 +210,10 @@ export function DatasetsPage() {
         preset: PRESETS[`${kind}-${family}`],
         out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
         count,
+        provider: providerId,
+        ...(model.trim() ? { generationModel: model.trim() } : {}),
+        ...(profileId ? { profileId } : {}),
+        ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
         ...(seedConfigPath.trim()
           ? { seedConfigPath: seedConfigPath.trim() }
           : {}),
@@ -161,8 +221,13 @@ export function DatasetsPage() {
       const seedNote = res.seeds
         ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
         : "";
+      const profileNote = res.profile
+        ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.rules} rules)`
+        : "";
+      const turnNote =
+        res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
       setOk(
-        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}`,
+        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`,
       );
       await refresh();
     } catch (e) {
@@ -174,6 +239,15 @@ export function DatasetsPage() {
 
   return (
     <div className="p-6 space-y-6">
+      <ProfileWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        onSaved={async (name) => {
+          await refresh();
+          setProfileId(name);
+          setOk(`Saved app profile "${name}" — it will tailor the next dataset.`);
+        }}
+      />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Database className="w-5 h-5 text-primary" />
@@ -235,6 +309,77 @@ export function DatasetsPage() {
               </div>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Conversation</Label>
+              <div className="flex items-center gap-1">
+                {(["single", "multi"] as const).map((m) => (
+                  <Button
+                    key={m}
+                    size="sm"
+                    variant={turnMode === m ? "default" : "outline"}
+                    onClick={() => setTurnMode(m)}
+                    title={
+                      m === "single"
+                        ? "One message per case"
+                        : kind === "security"
+                          ? "A [Turn N] escalation transcript"
+                          : "A [Turn N] multi-step task conversation"
+                    }
+                  >
+                    {m === "single" ? "single-turn" : "multi-turn"}
+                  </Button>
+                ))}
+                {turnMode === "multi" && (
+                  <Input
+                    type="number"
+                    className="w-16"
+                    min={2}
+                    max={8}
+                    value={maxTurns}
+                    onChange={(e) =>
+                      setMaxTurns(
+                        Math.min(8, Math.max(2, Number(e.target.value) || 2)),
+                      )
+                    }
+                    title="Max turns"
+                  />
+                )}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Provider</Label>
+              <div className="flex gap-1">
+                {providers.map((p) => (
+                  <Button
+                    key={p.id}
+                    size="sm"
+                    variant={providerId === p.id ? "default" : "outline"}
+                    onClick={() => selectProvider(p)}
+                    title={`Generate with ${p.label} (needs ${p.apiKeyEnv})`}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="model">
+                Model
+              </Label>
+              <Input
+                id="model"
+                className="w-64 font-mono text-xs"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={provider.defaultModel}
+                list="model-suggestions"
+              />
+              <datalist id="model-suggestions">
+                {provider.suggestedModels.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs" htmlFor="count">
                 Rows
               </Label>
@@ -268,6 +413,63 @@ export function DatasetsPage() {
               Generate
             </Button>
           </div>
+          {provider.keyConfigured ? (
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <code>{provider.apiKeyEnv}</code> is configured on the server.
+            </p>
+          ) : (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              <code>{provider.apiKeyEnv}</code> is not set on the server —
+              generation with {provider.label} will fail until it is.
+            </p>
+          )}
+          <div className="space-y-1 rounded-lg border border-dashed border-border p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <Label className="text-xs flex items-center gap-1.5">
+                <Wand2 className="w-3.5 h-3.5 text-primary" />
+                Tailor to my app (optional)
+              </Label>
+              <Button size="sm" variant="outline" onClick={() => setWizardOpen(true)}>
+                <Wand2 className="w-3.5 h-3.5" />
+                Customize for my app
+              </Button>
+            </div>
+            {profiles.length > 0 ? (
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <Button
+                  size="sm"
+                  variant={profileId === "" ? "default" : "outline"}
+                  onClick={() => setProfileId("")}
+                >
+                  Generic
+                </Button>
+                {profiles.map((p) => (
+                  <Button
+                    key={p.name}
+                    size="sm"
+                    variant={profileId === p.name ? "default" : "outline"}
+                    onClick={() => setProfileId(p.name)}
+                    title={
+                      p.description
+                        ? `${p.description} — ${p.toolCount} tools, ${p.ruleCount} rules`
+                        : `${p.toolCount} tools, ${p.ruleCount} rules`
+                    }
+                  >
+                    {p.name}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground pt-1">
+                No app profiles yet. Import your system prompt, MCP manifest, or
+                OpenAPI spec — attacks will reference your app's real domain,
+                rules, and high-value tools.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-1">
             <Label className="text-xs" htmlFor="seedConfig">
               Seed from target analysis (optional)
@@ -290,10 +492,10 @@ export function DatasetsPage() {
             Writes to{" "}
             <code>data/datasets/{kind === "quality" ? "quality" : "nemo"}-{family}/{outName || "v1"}.json</code>.
             {kind === "quality" ? " Quality datasets grade correctness against a reference and run on the quality scorer (not the security engine)." : " Security datasets are adversarial and run through the red-team engine."}
-            Requires the NeMo Data Designer service to be reachable
-            (<code>NEMO_DATA_DESIGNER_URL</code>) and a provider API key
-            (<code>NVIDIA_API_KEY</code> for NIM or <code>OPENAI_API_KEY</code>{" "}
-            for OpenAI).
+            {" "}Rows are generated by <strong>{provider.label}</strong> (
+            <code>{model || provider.defaultModel}</code>) via the NeMo Data
+            Designer service, which must be reachable (
+            <code>NEMO_DATA_DESIGNER_URL</code>).
           </p>
 
           {error && (

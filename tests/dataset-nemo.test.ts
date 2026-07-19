@@ -15,7 +15,11 @@ import {
 } from "../lib/dataset/validate.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { recordToRow } from "../lib/dataset/map-records.js";
-import { extractRecords } from "../lib/dataset/nemo-client.js";
+import {
+  extractRecords,
+  NemoDataDesignerClient,
+} from "../lib/dataset/nemo-client.js";
+import { applyGenerationOverrides } from "../lib/dataset/provider-options.js";
 import { loadCustomAttacksFromConfig } from "../lib/custom-attacks-loader.js";
 import { listDatasets } from "../lib/dataset/list.js";
 import type { Config } from "../lib/types.js";
@@ -108,6 +112,43 @@ describe("buildDataDesignerConfig", () => {
     expect(cat && "values" in cat && cat.values).toEqual(["tool_misuse"]);
   });
 
+  it("single-turn (default) emits no turns sampler and the single-message template", () => {
+    const config = buildDataDesignerConfig({ family: "mcp", count: 5 });
+    expect(config.columns.some((c) => c.name === "turns")).toBe(false);
+    const promptCol = config.columns.find((c) => c.name === "prompt");
+    const text = promptCol && "prompt" in promptCol ? promptCol.prompt : "";
+    expect(text).toContain("Write ONE realistic attacker message");
+    expect(text).not.toContain("[Turn 1]");
+  });
+
+  it("multi-turn adds a turns sampler (2..maxTurns) and the transcript template", () => {
+    const config = buildDataDesignerConfig({
+      family: "mcp",
+      count: 5,
+      turnMode: "multi",
+      maxTurns: 4,
+    });
+    const turns = config.columns.find((c) => c.name === "turns");
+    expect(turns && "values" in turns && turns.values).toEqual(["2", "3", "4"]);
+    // turns sampler must precede the LLM prompt column (DD seed-before-LLM rule)
+    const turnsIdx = config.columns.findIndex((c) => c.name === "turns");
+    const promptIdx = config.columns.findIndex((c) => c.name === "prompt");
+    expect(turnsIdx).toBeLessThan(promptIdx);
+    const promptCol = config.columns[promptIdx];
+    const text = "prompt" in promptCol ? promptCol.prompt : "";
+    expect(text).toContain("{{turns}}-message attacker");
+    expect(text).toContain("[Turn 1]");
+  });
+
+  it("clamps maxTurns into 2..8", () => {
+    const lo = buildDataDesignerConfig({ family: "mcp", turnMode: "multi", maxTurns: 1 });
+    const loTurns = lo.columns.find((c) => c.name === "turns");
+    expect(loTurns && "values" in loTurns && loTurns.values).toEqual(["2"]);
+    const hi = buildDataDesignerConfig({ family: "mcp", turnMode: "multi", maxTurns: 99 });
+    const hiTurns = hi.columns.find((c) => c.name === "turns");
+    expect(hiTurns && "values" in hiTurns && (hiTurns.values as string[]).length).toBe(7);
+  });
+
   it("defaults to the nim provider", () => {
     const config = buildDataDesignerConfig({ family: "mcp" });
     expect(config.modelProvider).toBe("nim");
@@ -148,6 +189,105 @@ describe("recordToRow", () => {
     expect(String(row.description)).toMatch(/family=mcp/);
     // The mapped row passes strict validation.
     expect(validateRows([row]).valid).toHaveLength(1);
+  });
+});
+
+describe("applyGenerationOverrides", () => {
+  const base = () => ({ family: "mcp", provider: "nim" }) as never;
+
+  it("accepts a known provider and applies its default model", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(applyGenerationOverrides(preset as never, { provider: "openai" })).toBeNull();
+    expect(preset.provider).toBe("openai");
+    expect(preset.generationModel).toBe("gpt-4o-mini");
+  });
+
+  it("an explicit model wins over the provider default", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(
+      applyGenerationOverrides(preset as never, {
+        provider: "openai",
+        generationModel: "gpt-4o",
+      }),
+    ).toBeNull();
+    expect(preset.generationModel).toBe("gpt-4o");
+  });
+
+  it("rejects unknown providers and malformed model ids (fail-closed)", () => {
+    expect(
+      applyGenerationOverrides(base(), { provider: "closedai" }),
+    ).toMatch(/unknown provider/);
+    expect(
+      applyGenerationOverrides(base(), { generationModel: "bad model !!" }),
+    ).toMatch(/invalid generationModel/);
+    expect(
+      applyGenerationOverrides(base(), { generationModel: 42 }),
+    ).toMatch(/must be a string/);
+  });
+
+  it("leaves the preset untouched when no overrides are given", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(applyGenerationOverrides(preset as never, {})).toBeNull();
+    expect(preset.provider).toBe("nim");
+    expect(preset.generationModel).toBeUndefined();
+  });
+});
+
+describe("NemoDataDesignerClient error handling", () => {
+  const config = { columns: [] } as never;
+
+  const clientWith = (fetchImpl: typeof fetch) =>
+    new NemoDataDesignerClient({
+      baseUrl: "http://dd.example:8080",
+      fetchImpl,
+    });
+
+  it("returns records on a well-formed JSON response", async () => {
+    const client = clientWith(async () =>
+      new Response(JSON.stringify({ records: [{ a: 1 }] }), { status: 200 }),
+    );
+    await expect(client.generate(config, 1)).resolves.toEqual([{ a: 1 }]);
+  });
+
+  it("explains an HTML 200 response instead of throwing a JSON.parse error", async () => {
+    const client = clientWith(async () =>
+      new Response("<!doctype html><html><body>a web app</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /non-JSON body.*<!doctype html.*NEMO_DATA_DESIGNER_URL/s,
+    );
+    // The old failure mode must not resurface.
+    await expect(client.generate(config, 1)).rejects.not.toThrow(
+      /Unexpected token/,
+    );
+  });
+
+  it("explains a connection failure with the resolved base url", async () => {
+    const client = clientWith(async () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ECONNREFUSED" },
+      });
+    });
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /unreachable at http:\/\/dd\.example:8080 \(ECONNREFUSED\)/,
+    );
+  });
+
+  it("still reports HTTP error statuses with the body snippet", async () => {
+    const client = clientWith(async () =>
+      new Response("upstream exploded", { status: 500 }),
+    );
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /HTTP 500: upstream exploded/,
+    );
+  });
+
+  it("exposes the resolved base url for diagnostics", () => {
+    const client = clientWith(fetch);
+    expect(client.url).toBe("http://dd.example:8080");
   });
 });
 

@@ -1,0 +1,368 @@
+import { useState } from "react";
+import {
+  importProfile,
+  saveProfile,
+  type AppProfile,
+  type ProfileTool,
+  type ImportFormat,
+} from "@/api/datasets";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertTriangle,
+  Loader2,
+  Upload,
+  Wand2,
+  ArrowRight,
+  ArrowLeft,
+} from "lucide-react";
+
+const IMPORT_FORMATS: { id: ImportFormat; label: string; hint: string; placeholder: string }[] = [
+  {
+    id: "system-prompt",
+    label: "System prompt",
+    hint: "Paste your app's system prompt / instructions. Business rules are extracted automatically.",
+    placeholder: "You are a support assistant. Never reveal internal pricing. Always verify identity before a refund…",
+  },
+  {
+    id: "mcp-manifest",
+    label: "MCP tool manifest",
+    hint: "Paste a tools/list JSON result from your MCP server.",
+    placeholder: '{ "tools": [ { "name": "search_docs", "description": "…" } ] }',
+  },
+  {
+    id: "openapi",
+    label: "OpenAPI spec",
+    hint: "Paste an OpenAPI/Swagger JSON document. Mutating operations are flagged sensitive.",
+    placeholder: '{ "openapi": "3.0.0", "paths": { "/orders": { "post": { … } } } }',
+  },
+];
+
+type Step = "import" | "review";
+
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Called after a profile is saved so the parent can select it. */
+  onSaved: (profileName: string) => void;
+}
+
+const emptyProfile: AppProfile = { name: "" };
+
+export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
+  const [step, setStep] = useState<Step>("import");
+  const [format, setFormat] = useState<ImportFormat>("system-prompt");
+  const [content, setContent] = useState("");
+  const [profile, setProfile] = useState<AppProfile>(emptyProfile);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setStep("import");
+    setFormat("system-prompt");
+    setContent("");
+    setProfile(emptyProfile);
+    setError(null);
+    setBusy(false);
+  };
+
+  const close = (o: boolean) => {
+    if (!o) reset();
+    onOpenChange(o);
+  };
+
+  const activeFormat = IMPORT_FORMATS.find((f) => f.id === format)!;
+
+  const runImport = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { profile: draft } = await importProfile(format, content);
+      setProfile({ ...emptyProfile, ...draft, name: profile.name || "" });
+      setStep("review");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skipToManual = () => {
+    setProfile({ ...emptyProfile, source: "manual" });
+    setStep("review");
+    setError(null);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await saveProfile(profile);
+      onSaved(profile.name);
+      close(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setField = <K extends keyof AppProfile>(k: K, v: AppProfile[K]) =>
+    setProfile((p) => ({ ...p, [k]: v }));
+
+  const linesToList = (s: string) =>
+    s.split("\n").map((x) => x.trim()).filter(Boolean);
+  const listToLines = (a?: string[]) => (a ?? []).join("\n");
+
+  const toggleSensitive = (i: number) =>
+    setProfile((p) => {
+      const tools = [...(p.tools ?? [])];
+      tools[i] = { ...tools[i], sensitive: !tools[i].sensitive };
+      return { ...p, tools };
+    });
+
+  const nameValid = /^[a-z0-9][a-z0-9._-]*$/i.test(profile.name.trim());
+
+  return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Wand2 className="w-4 h-4 text-primary" />
+            Customize for my app
+          </DialogTitle>
+          <DialogDescription>
+            {step === "import"
+              ? "Import an artifact you already have, or skip to enter details by hand. This tailors generated attacks to your app's domain, rules, and tools."
+              : "Review and edit what we found, then save this profile to reuse across datasets."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === "import" && (
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label className="text-xs">Import from</Label>
+              <div className="flex flex-wrap gap-1">
+                {IMPORT_FORMATS.map((f) => (
+                  <Button
+                    key={f.id}
+                    size="sm"
+                    variant={format === f.id ? "default" : "outline"}
+                    onClick={() => setFormat(f.id)}
+                  >
+                    {f.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">{activeFormat.hint}</p>
+            </div>
+            <Textarea
+              className="min-h-48 font-mono text-xs"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder={activeFormat.placeholder}
+            />
+            {error && (
+              <Alert variant="destructive">
+                <AlertTriangle className="w-4 h-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
+
+        {step === "review" && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs" htmlFor="p-name">
+                  Profile name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="p-name"
+                  value={profile.name}
+                  onChange={(e) => setField("name", e.target.value)}
+                  placeholder="my-app"
+                  aria-invalid={profile.name.length > 0 && !nameValid}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs" htmlFor="p-desc">
+                  What the app does
+                </Label>
+                <Input
+                  id="p-desc"
+                  value={profile.description ?? ""}
+                  onChange={(e) => setField("description", e.target.value)}
+                  placeholder="a retail banking assistant"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="p-sys">
+                System prompt / guardrails
+              </Label>
+              <Textarea
+                id="p-sys"
+                className="min-h-20 text-xs"
+                value={profile.systemPrompt ?? ""}
+                onChange={(e) => setField("systemPrompt", e.target.value)}
+                placeholder="The instructions your app runs with (attacks try to subvert these)."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="p-rules">
+                Business rules — one per line
+              </Label>
+              <Textarea
+                id="p-rules"
+                className="min-h-20 text-xs"
+                value={listToLines(profile.businessRules)}
+                onChange={(e) => setField("businessRules", linesToList(e.target.value))}
+                placeholder={"Never issue a refund over $500\nNever expose another tenant's data"}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Invariants your app must never violate — they become grading criteria.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs">
+                Tools ({profile.tools?.length ?? 0}) — click a chip to mark it
+                sensitive (high-value target)
+              </Label>
+              <div className="flex flex-wrap gap-1.5 rounded-lg border border-border p-2 min-h-10">
+                {(profile.tools ?? []).length === 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    No tools. Add them below or import a manifest/OpenAPI spec.
+                  </span>
+                )}
+                {(profile.tools ?? []).map((t: ProfileTool, i) => (
+                  <button
+                    key={t.name + i}
+                    type="button"
+                    onClick={() => toggleSensitive(i)}
+                    title={t.description || t.name}
+                  >
+                    <Badge
+                      variant={t.sensitive ? "default" : "secondary"}
+                      className="cursor-pointer"
+                    >
+                      {t.sensitive ? "🔒 " : ""}
+                      {t.name}
+                    </Badge>
+                  </button>
+                ))}
+              </div>
+              <Input
+                className="text-xs"
+                placeholder="Add tools, comma-separated, then press Enter"
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const val = (e.target as HTMLInputElement).value;
+                  const names = val.split(",").map((x) => x.trim()).filter(Boolean);
+                  if (!names.length) return;
+                  setProfile((p) => {
+                    const existing = new Set(
+                      (p.tools ?? []).map((t) => t.name.toLowerCase()),
+                    );
+                    const added = names
+                      .filter((n) => !existing.has(n.toLowerCase()))
+                      .map((name) => ({ name }));
+                    return { ...p, tools: [...(p.tools ?? []), ...added] };
+                  });
+                  (e.target as HTMLInputElement).value = "";
+                }}
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs" htmlFor="p-roles">
+                  Roles — one per line
+                </Label>
+                <Textarea
+                  id="p-roles"
+                  className="min-h-16 text-xs"
+                  value={listToLines(profile.roles)}
+                  onChange={(e) => setField("roles", linesToList(e.target.value))}
+                  placeholder={"customer\nadmin"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs" htmlFor="p-data">
+                  Sensitive data — one per line
+                </Label>
+                <Textarea
+                  id="p-data"
+                  className="min-h-16 text-xs"
+                  value={listToLines(profile.dataClasses)}
+                  onChange={(e) => setField("dataClasses", linesToList(e.target.value))}
+                  placeholder={"PII\naccount numbers"}
+                />
+              </div>
+            </div>
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertTriangle className="w-4 h-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="sm:justify-between">
+          {step === "import" ? (
+            <>
+              <Button variant="ghost" onClick={skipToManual} disabled={busy}>
+                Skip — enter by hand
+              </Button>
+              <Button onClick={runImport} disabled={busy || !content.trim()}>
+                {busy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
+                Import
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => setStep("import")} disabled={busy}>
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Button>
+              <Button onClick={save} disabled={busy || !nameValid}>
+                {busy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Wand2 className="w-4 h-4" />
+                )}
+                Save profile &amp; use
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default ProfileWizard;
