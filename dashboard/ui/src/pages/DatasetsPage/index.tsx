@@ -213,9 +213,7 @@ export function DatasetsPage() {
         provider: providerId,
         ...(model.trim() ? { generationModel: model.trim() } : {}),
         ...(profileId ? { profileId } : {}),
-        ...(kind === "security" && turnMode === "multi"
-          ? { turnMode: "multi" as const, maxTurns }
-          : {}),
+        ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
         ...(seedConfigPath.trim()
           ? { seedConfigPath: seedConfigPath.trim() }
           : {}),
@@ -310,43 +308,43 @@ export function DatasetsPage() {
                 ))}
               </div>
             </div>
-            {kind === "security" && (
-              <div className="space-y-1">
-                <Label className="text-xs">Conversation</Label>
-                <div className="flex items-center gap-1">
-                  {(["single", "multi"] as const).map((m) => (
-                    <Button
-                      key={m}
-                      size="sm"
-                      variant={turnMode === m ? "default" : "outline"}
-                      onClick={() => setTurnMode(m)}
-                      title={
-                        m === "single"
-                          ? "One attacker message per case"
-                          : "A [Turn N] escalation transcript replayed turn-by-turn"
-                      }
-                    >
-                      {m === "single" ? "single-turn" : "multi-turn"}
-                    </Button>
-                  ))}
-                  {turnMode === "multi" && (
-                    <Input
-                      type="number"
-                      className="w-16"
-                      min={2}
-                      max={8}
-                      value={maxTurns}
-                      onChange={(e) =>
-                        setMaxTurns(
-                          Math.min(8, Math.max(2, Number(e.target.value) || 2)),
-                        )
-                      }
-                      title="Max turns"
-                    />
-                  )}
-                </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Conversation</Label>
+              <div className="flex items-center gap-1">
+                {(["single", "multi"] as const).map((m) => (
+                  <Button
+                    key={m}
+                    size="sm"
+                    variant={turnMode === m ? "default" : "outline"}
+                    onClick={() => setTurnMode(m)}
+                    title={
+                      m === "single"
+                        ? "One message per case"
+                        : kind === "security"
+                          ? "A [Turn N] escalation transcript"
+                          : "A [Turn N] multi-step task conversation"
+                    }
+                  >
+                    {m === "single" ? "single-turn" : "multi-turn"}
+                  </Button>
+                ))}
+                {turnMode === "multi" && (
+                  <Input
+                    type="number"
+                    className="w-16"
+                    min={2}
+                    max={8}
+                    value={maxTurns}
+                    onChange={(e) =>
+                      setMaxTurns(
+                        Math.min(8, Math.max(2, Number(e.target.value) || 2)),
+                      )
+                    }
+                    title="Max turns"
+                  />
+                )}
               </div>
-            )}
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Provider</Label>
               <div className="flex gap-1">

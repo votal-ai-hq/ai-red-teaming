@@ -138,6 +138,34 @@ describe("config builders inject profile context", () => {
       "a travel booking agent",
     );
   });
+
+  it("quality multi-turn adds a turns sampler and the [Turn N] task template", () => {
+    const cfg = buildQualityDataDesignerConfig({
+      family: "agent",
+      kind: "quality",
+      count: 5,
+      turnMode: "multi",
+      maxTurns: 3,
+    });
+    const turns = cfg.columns.find((c) => c.name === "turns");
+    expect(turns && "values" in turns && turns.values).toEqual(["2", "3"]);
+    const turnsIdx = cfg.columns.findIndex((c) => c.name === "turns");
+    const inputIdx = cfg.columns.findIndex((c) => c.name === "input");
+    expect(turnsIdx).toBeLessThan(inputIdx); // sampler before LLM column
+    const inputCol = cfg.columns[inputIdx];
+    const text = "prompt" in inputCol ? inputCol.prompt : "";
+    expect(text).toContain("MULTI-TURN FUNCTIONAL");
+    expect(text).toContain("[Turn 1]");
+  });
+
+  it("quality single-turn (default) has no turns sampler", () => {
+    const cfg = buildQualityDataDesignerConfig({
+      family: "agent",
+      kind: "quality",
+      count: 5,
+    });
+    expect(cfg.columns.some((c) => c.name === "turns")).toBe(false);
+  });
 });
 
 describe("importers", () => {

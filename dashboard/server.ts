@@ -1907,7 +1907,7 @@ const server = createServer(
             summary: formatHistogram(histogram),
             ...(seedInfo ? { seeds: seedInfo } : {}),
             ...(profileInfo ? { profile: profileInfo } : {}),
-            ...(kind === "security" && preset.turnMode === "multi"
+            ...(preset.turnMode === "multi"
               ? { turnMode: "multi", maxTurns: Math.min(8, Math.max(2, preset.maxTurns ?? 3)) }
               : {}),
           }),

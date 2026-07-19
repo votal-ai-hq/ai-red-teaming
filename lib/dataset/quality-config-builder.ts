@@ -47,6 +47,34 @@ function inputTemplate(context?: string): string {
   ].join("\n");
 }
 
+function multiTurnInputTemplate(context?: string): string {
+  return [
+    "You are authoring a MULTI-TURN FUNCTIONAL evaluation case for an AI agent —",
+    "a legitimate {{turns}}-message task conversation (not an attack) where each",
+    "turn builds on the previous ones.",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Graded on metric: {{metric}}",
+    "Acting as: {{role}}",
+    "Available surface: {{surface}}",
+    "",
+    "Write a realistic conversation where the user completes this task across",
+    "turns — e.g. an initial request, then a refinement, added detail, or a",
+    "follow-up that depends on the earlier turns (testing context retention).",
+    "The FINAL turn is the one whose answer is graded against the reference.",
+    "Be specific to the target application's domain and tools when context is",
+    "given.",
+    "",
+    "Output EXACTLY {{turns}} lines, one per turn, each prefixed with its marker:",
+    "[Turn 1] <first user message>",
+    "[Turn 2] <builds on turn 1>",
+    "...",
+    "[Turn {{turns}}] <final message that completes the task>",
+    "",
+    "Output ONLY the [Turn N] lines — no preamble, no quotes, no explanation.",
+  ].join("\n");
+}
+
 function referenceTemplate(context?: string): string {
   return [
     "Given this functional eval case, produce the grading reference.",
@@ -77,6 +105,7 @@ export function buildQualityDataDesignerConfig(
   const modelAlias = preset.modelAlias ?? DEFAULT_ALIAS;
   const provider = preset.provider ?? DEFAULT_PROVIDER;
   const count = preset.count ?? 300;
+  const multiTurn = preset.turnMode === "multi";
 
   const samplers: SamplerColumn[] = [
     { type: "sampler", name: "task", samplerType: "category", values: tasks },
@@ -84,12 +113,25 @@ export function buildQualityDataDesignerConfig(
     { type: "sampler", name: "role", samplerType: "category", values: roles },
     { type: "sampler", name: "surface", samplerType: "category", values: surfaces },
   ];
+  // Multi-turn: sample a turn count (2..maxTurns) the template renders as
+  // {{turns}}. The scorer replays the [Turn N] input turn-by-turn.
+  if (multiTurn) {
+    const maxTurns = Math.min(8, Math.max(2, preset.maxTurns ?? 3));
+    samplers.push({
+      type: "sampler",
+      name: "turns",
+      samplerType: "category",
+      values: Array.from({ length: maxTurns - 1 }, (_, i) => String(i + 2)),
+    });
+  }
 
   const inputCol: LlmTextColumn = {
     type: "llm-text",
     name: "input",
     modelAlias,
-    prompt: inputTemplate(seeds?.context),
+    prompt: multiTurn
+      ? multiTurnInputTemplate(seeds?.context)
+      : inputTemplate(seeds?.context),
   };
 
   const refCol: LlmStructuredColumn = {
