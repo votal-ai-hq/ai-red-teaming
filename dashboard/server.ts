@@ -1686,6 +1686,7 @@ const server = createServer(
           "system-prompt",
           "mcp-manifest",
           "openapi",
+          "policy-doc",
         ];
         if (!formats.includes(body.format as ImportFormat)) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1853,7 +1854,9 @@ const server = createServer(
         // (profileId) or an inline profile from the wizard. Its roles/tools
         // become samplers and its context is injected into the prompt. Profile
         // seeds are merged over any codebase-analysis seeds.
-        let profileInfo: { name: string; tools: number; rules: number } | undefined;
+        let profileInfo:
+          | { name: string; tools: number; rules: number; policies: number }
+          | undefined;
         if (body.profileId || body.profile !== undefined) {
           const profile = body.profileId
             ? loadProfile(repoRoot, String(body.profileId))
@@ -1866,6 +1869,7 @@ const server = createServer(
             name: profile.name,
             tools: profile.tools?.length ?? 0,
             rules: profile.businessRules?.length ?? 0,
+            policies: profile.policies?.length ?? 0,
           };
         }
 

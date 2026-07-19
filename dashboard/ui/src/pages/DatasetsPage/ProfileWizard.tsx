@@ -4,6 +4,7 @@ import {
   saveProfile,
   type AppProfile,
   type ProfileTool,
+  type Policy,
   type ImportFormat,
 } from "@/api/datasets";
 import {
@@ -27,6 +28,8 @@ import {
   Wand2,
   ArrowRight,
   ArrowLeft,
+  Plus,
+  Trash2,
 } from "lucide-react";
 
 const IMPORT_FORMATS: { id: ImportFormat; label: string; hint: string; placeholder: string }[] = [
@@ -48,7 +51,16 @@ const IMPORT_FORMATS: { id: ImportFormat; label: string; hint: string; placehold
     hint: "Paste an OpenAPI/Swagger JSON document. Mutating operations are flagged sensitive.",
     placeholder: '{ "openapi": "3.0.0", "paths": { "/orders": { "post": { … } } } }',
   },
+  {
+    id: "policy-doc",
+    label: "Policy document",
+    hint: "Paste or upload your policies (markdown, text, or JSON). Each heading / rule becomes a named policy with criteria that generation targets and grading checks.",
+    placeholder:
+      "## No cross-tenant access\nThe agent must never read or return another tenant's data.\n\n## Refund limit\nRefunds must never exceed $500 without a manager approval.",
+  },
 ];
+
+const UPLOAD_ACCEPT = ".md,.markdown,.txt,.json,.mdx,text/plain,text/markdown,application/json";
 
 type Step = "import" | "review";
 
@@ -126,6 +138,23 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
     s.split("\n").map((x) => x.trim()).filter(Boolean);
   const listToLines = (a?: string[]) => (a ?? []).join("\n");
 
+  const setPolicy = (i: number, patch: Partial<Policy>) =>
+    setProfile((p) => {
+      const policies = [...(p.policies ?? [])];
+      policies[i] = { ...policies[i], ...patch };
+      return { ...p, policies };
+    });
+  const addPolicy = () =>
+    setProfile((p) => ({
+      ...p,
+      policies: [...(p.policies ?? []), { name: "", criteria: "" }],
+    }));
+  const removePolicy = (i: number) =>
+    setProfile((p) => ({
+      ...p,
+      policies: (p.policies ?? []).filter((_, j) => j !== i),
+    }));
+
   const toggleSensitive = (i: number) =>
     setProfile((p) => {
       const tools = [...(p.tools ?? [])];
@@ -167,6 +196,31 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
                 ))}
               </div>
               <p className="text-[11px] text-muted-foreground">{activeFormat.hint}</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground">
+                Paste below, or
+              </span>
+              <label className="inline-flex items-center gap-1.5 text-xs text-primary cursor-pointer hover:underline">
+                <Upload className="w-3.5 h-3.5" />
+                Upload a file
+                <input
+                  type="file"
+                  className="hidden"
+                  accept={UPLOAD_ACCEPT}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setError(null);
+                    try {
+                      setContent(await file.text());
+                    } catch {
+                      setError("Could not read that file.");
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             </div>
             <Textarea
               className="min-h-48 font-mono text-xs"
@@ -222,6 +276,55 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
                 onChange={(e) => setField("systemPrompt", e.target.value)}
                 placeholder="The instructions your app runs with (attacks try to subvert these)."
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">
+                  Policies ({profile.policies?.length ?? 0}) — a name + the
+                  criteria a successful attack violates
+                </Label>
+                <Button size="sm" variant="outline" onClick={addPolicy}>
+                  <Plus className="w-3.5 h-3.5" />
+                  Add policy
+                </Button>
+              </div>
+              {(profile.policies ?? []).length === 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  No policies yet. Import a policy document above, or add them
+                  here — each becomes a targeted generation instruction and a
+                  precise grading criterion.
+                </p>
+              )}
+              {(profile.policies ?? []).map((pol: Policy, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-1.5 rounded-lg border border-border p-2"
+                >
+                  <div className="flex-1 space-y-1">
+                    <Input
+                      className="text-xs font-medium"
+                      value={pol.name}
+                      onChange={(e) => setPolicy(i, { name: e.target.value })}
+                      placeholder="Policy name (e.g. No cross-tenant access)"
+                    />
+                    <Textarea
+                      className="min-h-12 text-xs"
+                      value={pol.criteria}
+                      onChange={(e) => setPolicy(i, { criteria: e.target.value })}
+                      placeholder="Criteria — the checkable rule (e.g. The agent must never return another tenant's data)."
+                    />
+                  </div>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={() => removePolicy(i)}
+                    title="Remove policy"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
             </div>
 
             <div className="space-y-1">

@@ -40,6 +40,7 @@ export interface ProfileSummary {
   source?: string;
   toolCount: number;
   ruleCount: number;
+  policyCount: number;
   roleCount: number;
 }
 
@@ -50,6 +51,7 @@ function summarize(p: AppProfile): ProfileSummary {
     source: p.source,
     toolCount: p.tools?.length ?? 0,
     ruleCount: p.businessRules?.length ?? 0,
+    policyCount: p.policies?.length ?? 0,
     roleCount: p.roles?.length ?? 0,
   };
 }
