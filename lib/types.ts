@@ -606,6 +606,24 @@ export interface Config {
      * Capped at 25. Default: 0 (off).
      */
     appTailoredCustomPromptCount?: number;
+    /**
+     * Optional in-run synthetic dataset generation. When set to `"nemo"`, the
+     * framework generates a NeMo Data Designer dataset (seeded from the live
+     * codebase analysis) and merges the rows into the custom attacks for the
+     * run — a generate-then-execute pass. Failure is non-fatal: the run falls
+     * back to whatever file-based custom attacks are present.
+     * See docs/specs/nemo-data-designer-datasets.md §8 (Phase 3).
+     */
+    datasetGenerator?: "nemo";
+    /** Config for `datasetGenerator`. Path is resolved relative to the config dir. */
+    datasetGeneratorConfig?: {
+      /** Preset file (configs/datasets/*.preset.json). */
+      preset: string;
+      /** Override the preset row count for in-run generation (keep modest). */
+      count?: number;
+      /** When true, seed generation from the live codebase analysis. Default: true. */
+      seedFromAnalysis?: boolean;
+    };
     /** Run an automated discovery round before attack rounds to probe the target and enrich sensitivePatterns. Default: false. */
     enableDiscovery?: boolean;
     /**
@@ -824,6 +842,17 @@ export interface Report {
   targetUrl: string;
   /** Snapshot of target config for UI rendering (Attack Path graph, etc.). */
   target?: ReportTargetDescriptor;
+  /**
+   * Provenance of the eval dataset used for this run, when the run's attack set
+   * came from a `customAttacksFile`. Enables grouping runs by dataset to track
+   * score over time (regression tracking). Absent for planner-only scans.
+   */
+  dataset?: {
+    /** The customAttacksFile path (dataset identity for grouping). */
+    file: string;
+    /** Whether the run was dataset-only (customAttacksOnly). */
+    only: boolean;
+  };
   rounds: RoundResult[];
   summary: {
     totalAttacks: number;

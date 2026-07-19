@@ -180,6 +180,7 @@ export function generateReport(
   affectedFiles?: Partial<Record<AttackCategory, AffectedFile[]>>,
   discoveryIntel?: Report["discovery"],
   target?: ReportTargetDescriptor,
+  dataset?: Report["dataset"],
 ): Report {
   const allResults = rounds.flatMap((r) => r.results);
 
@@ -244,6 +245,7 @@ export function generateReport(
     timestamp: new Date().toISOString(),
     targetUrl,
     target,
+    dataset,
     rounds,
     summary: {
       totalAttacks: allResults.length,

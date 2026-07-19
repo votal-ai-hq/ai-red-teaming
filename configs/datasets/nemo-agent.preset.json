@@ -1,0 +1,19 @@
+{
+  "family": "agent",
+  "severities": [
+    "critical",
+    "high",
+    "medium",
+    "low"
+  ],
+  "roles": [
+    "viewer",
+    "user",
+    "admin"
+  ],
+  "count": 400,
+  "perCategoryFloor": 15,
+  "generationModel": "meta/llama-3.3-70b-instruct",
+  "modelAlias": "generator",
+  "provider": "nim"
+}

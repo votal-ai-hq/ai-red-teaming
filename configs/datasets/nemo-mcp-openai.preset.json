@@ -1,0 +1,17 @@
+{
+  "family": "mcp",
+  "severities": ["critical", "high", "medium", "low"],
+  "roles": ["viewer", "user", "admin", "service"],
+  "surfaces": [
+    "a data-access / read tool",
+    "a file or resource-read tool",
+    "an outbound send/email/webhook tool",
+    "an admin or config-mutation tool",
+    "a cross-tenant lookup tool"
+  ],
+  "count": 400,
+  "perCategoryFloor": 15,
+  "provider": "openai",
+  "generationModel": "gpt-4o-mini",
+  "modelAlias": "generator"
+}

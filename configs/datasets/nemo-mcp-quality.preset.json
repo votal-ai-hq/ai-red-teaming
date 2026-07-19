@@ -1,0 +1,12 @@
+{
+  "family": "mcp",
+  "kind": "quality",
+  "tasks": ["tool_selection", "tool_argument_accuracy", "multi_step_task", "goal_completion", "parameter_extraction"],
+  "metrics": ["tool_call_accuracy", "goal_accuracy", "topic_adherence"],
+  "roles": ["end user", "power user", "support agent"],
+  "count": 300,
+  "perCategoryFloor": 15,
+  "provider": "nim",
+  "generationModel": "meta/llama-3.3-70b-instruct",
+  "modelAlias": "generator"
+}

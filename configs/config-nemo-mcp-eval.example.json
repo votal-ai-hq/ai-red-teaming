@@ -1,0 +1,44 @@
+{
+  "target": {
+    "baseUrl": "https://YOUR-ENDPOINT-HERE.example.com",
+    "agentEndpoint": "/v1/chat/completions",
+    "applicationDetails": "Dataset-only deep eval: replays a generated NeMo Data Designer dataset (data/datasets/nemo-mcp/*.json) against the target. customAttacksOnly=true disables the planner and runtime generation, so runs are reproducible for regression tracking. Point customAttacksFile at a versioned dataset file, or at the directory to load every pack in it.",
+    "policyFile": "policies/mcp-strict.json",
+    "customApiTemplate": {
+      "headers": { "Content-Type": "application/json" },
+      "bodyTemplate": "{\"model\": \"YOUR-MODEL\", \"messages\": [{\"role\": \"user\", \"content\": \"{{message}}\"}], \"max_tokens\": 512, \"temperature\": 0}",
+      "responsePath": "choices[0].message.content"
+    }
+  },
+  "requestSchema": {
+    "messageField": "message",
+    "roleField": "role"
+  },
+  "responseSchema": {
+    "responsePath": "choices[0].message.content",
+    "toolCallsPath": "choices[0].message.tool_calls",
+    "userInfoPath": "",
+    "guardrailsPath": ""
+  },
+  "auth": {
+    "methods": ["none"],
+    "credentials": [],
+    "apiKeys": {}
+  },
+  "customAttacksFile": "data/datasets/nemo-mcp/fixture.json",
+  "attackConfig": {
+    "adaptiveRounds": 1,
+    "concurrency": 2,
+    "delayBetweenRequestsMs": 100,
+    "enableLlmGeneration": false,
+    "includeSeedAttacks": false,
+    "customAttacksOnly": true,
+    "enableMultiTurnGeneration": false,
+    "enableAdaptiveMultiTurn": false,
+    "requireReviewConfirmation": false,
+    "llmProvider": "openrouter",
+    "llmModel": "anthropic/claude-sonnet-4.5",
+    "judgeProvider": "openrouter",
+    "judgeModel": "anthropic/claude-sonnet-4.5"
+  }
+}

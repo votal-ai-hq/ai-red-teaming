@@ -11,7 +11,7 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, extname, resolve as resolvePath } from "node:path";
+import { join, extname, dirname, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -26,6 +26,17 @@ import {
 } from "../lib/llm-provider.js";
 import { runRedTeam, MCP_MODULES, type RunProgress } from "../lib/run.js";
 import { formatErrorDetails } from "../lib/error-utils.js";
+import { listDatasets } from "../lib/dataset/list.js";
+import { groupEvalRuns } from "../lib/dataset/eval-trends.js";
+import { seedsFromAnalysis } from "../lib/dataset/seed-from-analysis.js";
+import { analyzeCodebase } from "../lib/codebase-analyzer.js";
+import type { DatasetSeeds } from "../lib/dataset/types.js";
+import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
+import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
+import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
+import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
+import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
+import type { DatasetPreset } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
 import {
   loadComplianceFrameworks,
@@ -772,6 +783,16 @@ async function startJob(job: Job): Promise<void> {
             const report = generateReport(
               describeTarget(job.config),
               [{ round: 1, results: attackResults }],
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              job.config.customAttacksFile
+                ? {
+                    file: job.config.customAttacksFile,
+                    only: job.config.attackConfig.customAttacksOnly === true,
+                  }
+                : undefined,
             );
             job.report = report;
             if (isDbConfigured() && job.tenantId) {
@@ -1486,6 +1507,205 @@ const server = createServer(
       } catch {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end("[]");
+      }
+      return;
+    }
+
+    // API: eval runs grouped by dataset (score over time / regression tracking)
+    if (url.pathname === "/api/eval-runs" && req.method === "GET") {
+      try {
+        const reports = listFileReportMetas()
+          .map((meta) => {
+            try {
+              const raw = readFileSync(
+                join(REPORT_DIR, meta.filename),
+                "utf-8",
+              );
+              const data = JSON.parse(raw) as {
+                dataset?: { file: string; only: boolean };
+              };
+              return {
+                filename: meta.filename,
+                timestamp: meta.timestamp,
+                score: meta.score,
+                targetUrl: meta.targetUrl,
+                dataset: data.dataset,
+              };
+            } catch {
+              return null;
+            }
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== null);
+        const trends = groupEvalRuns(reports);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ trends }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: list generated eval datasets (data/datasets/**) with stats
+    if (url.pathname === "/api/datasets" && req.method === "GET") {
+      try {
+        const datasets = listDatasets(join(import.meta.dirname, ".."));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ datasets }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: generate a dataset via NeMo Data Designer.
+    // Body: { preset: string, count?: number, out: string, seedFromAnalysisConfig?: object }
+    // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider
+    // API key (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).
+    if (url.pathname === "/api/datasets/generate" && req.method === "POST") {
+      const clientIp =
+        req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
+        req.socket.remoteAddress ||
+        "unknown";
+      const { allowed, retryAfterSec } = checkApiRateLimit(clientIp, "run");
+      if (!allowed) {
+        res.writeHead(429, {
+          "Content-Type": "application/json",
+          "Retry-After": String(retryAfterSec),
+        });
+        res.end(JSON.stringify({ error: "Too many requests.", retryAfterSec }));
+        return;
+      }
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req)) as {
+          preset?: string;
+          count?: number;
+          out?: string;
+          seedConfigPath?: string;
+        };
+        if (!body.preset || !body.out) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "preset and out are required" }));
+          return;
+        }
+        // Contain writes to data/datasets and preset reads to configs/datasets.
+        const presetAbs = resolvePath(repoRoot, body.preset);
+        const outAbs = resolvePath(repoRoot, body.out);
+        if (
+          !presetAbs.startsWith(join(repoRoot, "configs")) ||
+          !outAbs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !outAbs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error:
+                "preset must be under configs/, out must be a .json under data/datasets/",
+            }),
+          );
+          return;
+        }
+        if (!existsSync(presetAbs)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `preset not found: ${body.preset}` }));
+          return;
+        }
+
+        const preset = JSON.parse(
+          readFileSync(presetAbs, "utf-8"),
+        ) as DatasetPreset;
+        if (body.count) preset.count = body.count;
+        if (preset.family !== "mcp" && preset.family !== "agent") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `bad preset.family "${preset.family}"` }));
+          return;
+        }
+
+        // Optional: seed generation from a target's white-box analysis so the
+        // dataset is tailored to its tool graph / roles / MCP surface.
+        let seeds: DatasetSeeds | undefined;
+        let seedInfo: { roles: number; surfaces: number } | undefined;
+        if (body.seedConfigPath) {
+          const seedCfgAbs = resolvePath(repoRoot, body.seedConfigPath);
+          if (
+            !seedCfgAbs.startsWith(join(repoRoot, "configs")) ||
+            !seedCfgAbs.endsWith(".json")
+          ) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "seedConfigPath must be a .json under configs/",
+              }),
+            );
+            return;
+          }
+          if (!existsSync(seedCfgAbs)) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({ error: `seed config not found: ${body.seedConfigPath}` }),
+            );
+            return;
+          }
+          const seedCfg = loadConfig(seedCfgAbs);
+          const analysis = await analyzeCodebase(seedCfg);
+          seeds = seedsFromAnalysis(analysis);
+          seedInfo = {
+            roles: seeds.roles?.length ?? 0,
+            surfaces: seeds.surfaces?.length ?? 0,
+          };
+        }
+
+        const kind = preset.kind ?? "security";
+        const ddConfig =
+          kind === "quality"
+            ? buildQualityDataDesignerConfig(preset, seeds)
+            : buildDataDesignerConfig(preset, seeds);
+        const client = new NemoDataDesignerClient();
+        const records = await client.generate(ddConfig, preset.count);
+        const { valid, errors, histogram, duplicatesDropped } =
+          kind === "quality"
+            ? validateQualityRows(recordsToQualityRows(records))
+            : validateRows(recordsToRows(records, preset.family));
+
+        if (errors.length > 0 || valid.length === 0) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "generation produced invalid or zero rows",
+              invalid: errors.length,
+              kept: valid.length,
+              sampleErrors: errors.slice(0, 10),
+            }),
+          );
+          return;
+        }
+
+        mkdirSync(dirname(outAbs), { recursive: true });
+        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            out: body.out,
+            rowCount: valid.length,
+            duplicatesDropped,
+            histogram,
+            summary: formatHistogram(histogram),
+            ...(seedInfo ? { seeds: seedInfo } : {}),
+          }),
+        );
+      } catch (err) {
+        // Fail-soft messaging: Data Designer down / no creds is the common case.
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "dataset generation failed",
+            detail: formatErrorDetails(err),
+            hint: "Ensure the NeMo Data Designer service is reachable (NEMO_DATA_DESIGNER_URL) and a provider API key is set (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).",
+          }),
+        );
       }
       return;
     }

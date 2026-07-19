@@ -869,6 +869,31 @@ export async function runRedTeam(
     }
   }
 
+  // In-run synthetic dataset generation (Phase 3). Fail-soft: on any error the
+  // run continues with whatever file-based / app-tailored attacks exist.
+  if (config.attackConfig.datasetGenerator === "nemo") {
+    log("analyze", "Generating NeMo Data Designer dataset (in-run)...");
+    try {
+      const { generateNemoDatasetInRun } = await import(
+        "./dataset-generators/nemo.js"
+      );
+      const generated = await generateNemoDatasetInRun(config, {
+        configDir: cDir,
+        analysis,
+        log: (msg) => log("analyze", msg),
+      });
+      if (generated.length > 0) {
+        log("analyze", `NeMo dataset cases: ${generated.length}`);
+        customAttacks = [...customAttacks, ...generated];
+      }
+    } catch (e) {
+      log(
+        "analyze",
+        `NeMo dataset generation skipped (non-fatal): ${(e as Error).message}`,
+      );
+    }
+  }
+
   // Category applicability gating
   const skipIrrelevant =
     (config.target.type ?? "http_agent") === "mcp"
@@ -1656,6 +1681,12 @@ export async function runRedTeam(
         config.target.infra?.aiModel?.provider ??
         config.attackConfig.llmProvider,
     },
+    config.customAttacksFile
+      ? {
+          file: config.customAttacksFile,
+          only: config.attackConfig.customAttacksOnly === true,
+        }
+      : undefined,
   );
   // Skip file write when DB is configured (server stores to DB instead)
   let jsonPath = "";
