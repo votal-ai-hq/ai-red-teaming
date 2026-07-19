@@ -60,3 +60,22 @@ export interface EvalTrend {
 export function listEvalRuns() {
   return apiFetch<{ trends: EvalTrend[] }>("/api/eval-runs");
 }
+
+export interface PromoteFindingRequest {
+  row: {
+    category: string;
+    prompt: string;
+    successCriteria: string;
+    severity?: string;
+    name?: string;
+    source?: string;
+  };
+  out?: string;
+}
+
+export function promoteFinding(body: PromoteFindingRequest) {
+  return apiFetch<{ out: string; added: boolean; rowCount: number }>(
+    "/api/datasets/promote",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}

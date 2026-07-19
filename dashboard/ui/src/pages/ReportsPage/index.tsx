@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { getReportsMeta, getReport } from "@/api/reports";
 import { getStaticCompliance } from "@/api/compliance";
+import { promoteFinding } from "@/api/datasets";
 import type { ReportMeta, FullReport, ReportResult, ReportSummary, ComplianceResult } from "@/api/types";
 import { useDebounce } from "@/hooks/useDebounce";
 import { ScoreRing } from "@/components/shared/ScoreRing";
@@ -418,6 +419,69 @@ function complianceStatusDot(status: string): string {
   return "bg-gray-400";
 }
 
+/* ─── Save a confirmed finding as a permanent regression test ─── */
+
+function RegressionButton({ result }: { result: ReportResult }) {
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "dup" | "error">("idle");
+  const [msg, setMsg] = useState("");
+
+  const atk =
+    typeof result.attack === "object" && result.attack
+      ? (result.attack as Record<string, unknown>)
+      : null;
+  const payload = (atk?.payload as Record<string, unknown> | undefined) ?? undefined;
+  const prompt = String(
+    payload?.message ??
+      (typeof result.payload === "string" ? result.payload : "") ??
+      "",
+  ).trim();
+  const category = String(atk?.category ?? getCategory(result) ?? "").trim();
+  const successCriteria = String(
+    atk?.expectation ?? (result.findings ?? []).join("; ") ?? "",
+  ).trim();
+
+  if (!prompt || !category) return null;
+
+  const onClick = async () => {
+    setState("saving");
+    try {
+      const r = await promoteFinding({
+        row: {
+          category,
+          prompt,
+          successCriteria,
+          severity: String(atk?.severity ?? "high"),
+          name: getAttackName(result),
+        },
+      });
+      setState(r.added ? "saved" : "dup");
+      setMsg(r.added ? `Saved · ${r.rowCount} in regression set` : "Already in regression set");
+    } catch (e) {
+      setState("error");
+      setMsg((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={state === "saving" || state === "saved" || state === "dup"}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:opacity-60 transition-colors"
+      >
+        {state === "saved" || state === "dup" ? "✓ " : "＋ "}
+        Save as regression test
+      </button>
+      {msg && (
+        <span className={`text-[11px] ${state === "error" ? "text-red-600" : "text-muted-foreground"}`}>
+          {msg}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* ─── Finding Row (rich expandable detail) ─── */
 
 function FindingRow({ result, controls = [] }: { result: ReportResult; controls?: ComplianceControlRef[] }) {
@@ -596,6 +660,11 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                     {result.findings.map((f, i) => <li key={i}>{f}</li>)}
                   </ul>
                 </div>
+              )}
+
+              {/* ── Promote to regression dataset (confirmed compromises) ── */}
+              {(result.verdict === "PASS" || result.verdict === "PARTIAL") && (
+                <RegressionButton result={result} />
               )}
 
               {/* ── Threat Assessment + Confidence (compact row) ── */}

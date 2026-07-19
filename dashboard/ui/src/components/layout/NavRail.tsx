@@ -10,6 +10,7 @@ import {
   Shield,
   Briefcase,
   Database,
+  Gauge,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -19,6 +20,7 @@ const MAIN_NAV = [
   { path: "/scans", label: "Scan Activity", icon: Play },
   { path: "/new-scan", label: "Launch Scan", icon: PlusCircle },
   { path: "/datasets", label: "Datasets", icon: Database },
+  { path: "/evaluations", label: "Evaluations", icon: Gauge },
   { path: "/reports", label: "Reports", icon: FileText },
   { path: "/risk", label: "Risk", icon: AlertTriangle },
   { path: "/compliance", label: "Compliance", icon: CheckSquare },

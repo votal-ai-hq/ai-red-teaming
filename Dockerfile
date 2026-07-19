@@ -37,6 +37,7 @@ COPY config.example.json ./
 COPY examples/ ./examples/
 COPY data/ ./data/
 COPY scripts/ ./scripts/
+COPY configs/ ./configs/
 
 # Copy React build output
 COPY --from=ui-build /app/dashboard/ui/dist ./dashboard/ui/dist

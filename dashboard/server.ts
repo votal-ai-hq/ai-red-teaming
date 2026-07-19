@@ -36,7 +36,8 @@ import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-bu
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
 import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
-import type { DatasetPreset } from "../lib/dataset/types.js";
+import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
+import type { DatasetPreset, DatasetRow } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
 import {
   loadComplianceFrameworks,
@@ -1539,6 +1540,65 @@ const server = createServer(
         const trends = groupEvalRuns(reports);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ trends }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: promote a confirmed finding into a regression dataset (append row).
+    // Body: { row: {category, prompt, successCriteria, severity?, name?, source?}, out? }
+    if (url.pathname === "/api/datasets/promote" && req.method === "POST") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req)) as {
+          row?: PromoteInput;
+          out?: string;
+        };
+        if (!body.row?.category || !body.row?.prompt) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "row.category and row.prompt are required" }));
+          return;
+        }
+        const out = body.out || "data/datasets/regression/promoted.json";
+        const outAbs = resolvePath(repoRoot, out);
+        if (
+          !outAbs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !outAbs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "out must be a .json under data/datasets/" }));
+          return;
+        }
+
+        const candidate = buildRegressionRow(body.row);
+        // Fail-closed: the promoted row must be a valid dataset row.
+        const { valid, errors } = validateRows([candidate]);
+        if (valid.length === 0) {
+          res.writeHead(422, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "invalid finding", detail: errors }));
+          return;
+        }
+
+        let existing: DatasetRow[] = [];
+        if (existsSync(outAbs)) {
+          try {
+            const raw = JSON.parse(readFileSync(outAbs, "utf-8"));
+            if (Array.isArray(raw)) existing = raw as DatasetRow[];
+          } catch {
+            /* treat unreadable as empty; we overwrite with a valid array */
+          }
+        }
+        const { rows, added } = appendRow(existing, valid[0]);
+        if (added) {
+          mkdirSync(dirname(outAbs), { recursive: true });
+          writeFileSync(outAbs, JSON.stringify(rows, null, 2) + "\n", "utf-8");
+        }
+        res.writeHead(added ? 201 : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ out, added, rowCount: rows.length }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));

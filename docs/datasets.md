@@ -164,6 +164,17 @@ change to see the score move.
 Server endpoints: `GET /api/datasets`, `POST /api/datasets/generate`,
 `GET /api/eval-runs` (trends grouped by dataset).
 
+## Findings → dataset (regression flywheel)
+
+Every confirmed compromise can become a permanent regression test. On a report,
+open a finding with verdict PASS/PARTIAL and click **Save as regression test** —
+the exact attack (category, prompt, success criteria) is appended to
+`data/datasets/regression/promoted.json` (deduped, fail-closed validated). Point
+a scan's `customAttacksFile` at that set to re-test every past breach on each
+run. This is the white-box flywheel: every eval makes the next dataset stronger.
+
+Endpoint: `POST /api/datasets/promote` (admin).
+
 ## Two kinds: security vs functional quality
 
 Datasets come in two **kinds**, graded in opposite directions:
