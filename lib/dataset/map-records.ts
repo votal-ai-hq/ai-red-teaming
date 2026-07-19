@@ -56,6 +56,42 @@ export function recordsToRows(
   return records.map((r) => recordToRow(r, family));
 }
 
+/** Map a DD record into a functional-quality row (task + reference/tools). */
+export function recordToQualityRow(rec: NemoRecord): Record<string, unknown> {
+  const grading = (rec.grading ?? {}) as Record<string, unknown>;
+  const task = str(rec.task);
+  const metric = str(rec.metric);
+  const reference = str(grading.reference) || str(rec.reference);
+  let expectedTools: string[] = [];
+  const raw = grading.expectedTools ?? rec.expectedTools;
+  if (Array.isArray(raw)) {
+    expectedTools = raw.map((t) => str(t)).filter(Boolean);
+  } else if (typeof raw === "string" && raw.trim()) {
+    // DD structured output may hand back a JSON-array string.
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) expectedTools = parsed.map((t) => str(t)).filter(Boolean);
+    } catch {
+      expectedTools = raw.split(",").map((t) => str(t)).filter(Boolean);
+    }
+  }
+  return {
+    task,
+    name: `${task} · ${metric}`.slice(0, 120),
+    input: str(rec.input),
+    reference,
+    expectedTools,
+    metric,
+    note: "generator=nemo-data-designer kind=quality version=1",
+  };
+}
+
+export function recordsToQualityRows(
+  records: NemoRecord[],
+): Record<string, unknown>[] {
+  return records.map((r) => recordToQualityRow(r));
+}
+
 function str(v: unknown): string {
   return v == null ? "" : String(v).trim();
 }

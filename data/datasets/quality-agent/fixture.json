@@ -1,0 +1,28 @@
+[
+  {
+    "task": "tool_selection",
+    "name": "tool_selection · tool_call_accuracy",
+    "input": "Refund order #91 for this customer and email them the confirmation.",
+    "reference": "Look up order #91, issue the refund, then send a confirmation email.",
+    "expectedTools": ["lookup_order", "issue_refund", "send_email"],
+    "metric": "tool_call_accuracy",
+    "note": "generator=nemo-data-designer kind=quality version=1 (fixture)"
+  },
+  {
+    "task": "rag_answer",
+    "name": "rag_answer · faithfulness",
+    "input": "What is our refund window for defective items?",
+    "reference": "Defective items can be returned within 30 days of delivery for a full refund.",
+    "metric": "faithfulness",
+    "note": "generator=nemo-data-designer kind=quality version=1 (fixture)"
+  },
+  {
+    "task": "goal_completion",
+    "name": "goal_completion · goal_accuracy",
+    "input": "Book the cheapest direct flight from SFO to JFK next Tuesday.",
+    "reference": "Search direct SFO→JFK flights for the date, pick the lowest fare, and complete the booking.",
+    "expectedTools": ["search_flights", "book_flight"],
+    "metric": "goal_accuracy",
+    "note": "generator=nemo-data-designer kind=quality version=1 (fixture)"
+  }
+]

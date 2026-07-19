@@ -9,7 +9,13 @@
  */
 import { createHash } from "node:crypto";
 import { isAttackCategory } from "./category-set.js";
-import type { DatasetRow, Severity, ValidationResult } from "./types.js";
+import { isQualityTask, isQualityMetric } from "./quality-set.js";
+import type {
+  DatasetRow,
+  QualityRow,
+  Severity,
+  ValidationResult,
+} from "./types.js";
 
 const SEVERITIES: readonly Severity[] = ["critical", "high", "medium", "low"];
 
@@ -92,6 +98,82 @@ export function validateRows(rows: unknown[]): ValidationResult {
 
     valid.push(row);
     histogram[category] = (histogram[category] ?? 0) + 1;
+  });
+
+  return { valid, errors, histogram, duplicatesDropped };
+}
+
+export interface QualityValidationResult {
+  valid: QualityRow[];
+  errors: string[];
+  histogram: Record<string, number>;
+  duplicatesDropped: number;
+}
+
+/**
+ * Validate + dedup functional-quality rows. Fail-closed, mirroring the security
+ * validator: `task` must be a known quality task, `metric` a known metric,
+ * `input` non-empty, and at least one of `reference` / `expectedTools` present
+ * (a row with no grading reference can't be scored).
+ */
+export function validateQualityRows(rows: unknown[]): QualityValidationResult {
+  const valid: QualityRow[] = [];
+  const errors: string[] = [];
+  const histogram: Record<string, number> = {};
+  const seen = new Set<string>();
+  let duplicatesDropped = 0;
+
+  rows.forEach((raw, i) => {
+    const idx = i + 1;
+    if (!raw || typeof raw !== "object") {
+      errors.push(`row ${idx}: not an object`);
+      return;
+    }
+    const o = raw as Record<string, unknown>;
+    const task = String(o.task ?? "").trim();
+    const input = String(o.input ?? "").trim();
+    const metric = String(o.metric ?? "").trim();
+    const reference = String(o.reference ?? "").trim();
+    const expectedTools = Array.isArray(o.expectedTools)
+      ? (o.expectedTools as unknown[]).map((t) => String(t).trim()).filter(Boolean)
+      : [];
+
+    if (!isQualityTask(task)) {
+      errors.push(`row ${idx}: unknown quality task "${task}"`);
+      return;
+    }
+    if (!input) {
+      errors.push(`row ${idx} (${task}): empty input`);
+      return;
+    }
+    if (!isQualityMetric(metric)) {
+      errors.push(`row ${idx} (${task}): unknown metric "${metric}"`);
+      return;
+    }
+    if (!reference && expectedTools.length === 0) {
+      errors.push(`row ${idx} (${task}): no reference or expectedTools to grade against`);
+      return;
+    }
+
+    const h = hashPrompt(input);
+    if (seen.has(h)) {
+      duplicatesDropped++;
+      return;
+    }
+    seen.add(h);
+
+    const row: QualityRow = {
+      task,
+      name: String(o.name ?? `${task} case`).trim(),
+      input,
+      metric,
+    };
+    if (reference) row.reference = reference;
+    if (expectedTools.length) row.expectedTools = expectedTools;
+    if (o.note) row.note = String(o.note).trim();
+
+    valid.push(row);
+    histogram[task] = (histogram[task] ?? 0) + 1;
   });
 
   return { valid, errors, histogram, duplicatesDropped };

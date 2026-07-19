@@ -22,11 +22,42 @@ export interface DatasetRow {
 }
 
 /**
+ * A functional-QUALITY row. Grades "was the output correct?" against a
+ * reference — the opposite direction from a security `DatasetRow`. Consumed by
+ * a quality scorer (native correctness judge or NeMo Evaluator), NOT by the
+ * security attack-runner.
+ */
+export interface QualityRow {
+  /** Task type (see quality-set.ts), e.g. "tool_selection", "rag_answer". */
+  task: string;
+  name: string;
+  /** The legitimate task/question posed to the target. */
+  input: string;
+  /** Expected free-text answer (for answer/rag/summarization tasks). */
+  reference?: string;
+  /** Expected tool call(s) (for tool-use tasks), e.g. ["lookup", "refund"]. */
+  expectedTools?: string[];
+  /** Metric this row is graded on (see QUALITY_METRICS). */
+  metric: string;
+  note?: string;
+}
+
+/**
  * A generation preset — the tuning knobs. Lives as JSON under
  * `configs/datasets/*.preset.json`.
  */
 export interface DatasetPreset {
   family: DatasetFamily;
+  /**
+   * What the dataset evaluates. "security" (default) generates adversarial
+   * attacks graded on compromise; "quality" generates legitimate tasks graded
+   * on correctness against a reference.
+   */
+  kind?: "security" | "quality";
+  /** (quality) Task-type pool override (validated fail-closed). */
+  tasks?: string[];
+  /** (quality) Metrics to sample rows across. */
+  metrics?: string[];
   /** Optional override of the family's default category pool (validated fail-closed). */
   categories?: string[];
   /** Severity distribution to sample from. */

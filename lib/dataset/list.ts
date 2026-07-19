@@ -14,8 +14,10 @@ export interface DatasetSummary {
   name: string;
   /** Family inferred from the containing directory (mcp/agent/unknown). */
   family: string;
+  /** "security" (attack rows) or "quality" (task+reference rows), inferred from row shape. */
+  kind: "security" | "quality";
   rowCount: number;
-  /** category -> count. */
+  /** category (security) or task (quality) -> count. */
   histogram: Record<string, number>;
   sizeBytes: number;
 }
@@ -36,11 +38,19 @@ function summarizeFile(root: string, absPath: string): DatasetSummary | null {
   }
   if (!Array.isArray(rows)) return null;
 
+  // Quality rows carry `task` + `input`; security rows carry `category` + `prompt`.
+  const first = rows.find((r) => r && typeof r === "object") as
+    | Record<string, unknown>
+    | undefined;
+  const kind: "security" | "quality" =
+    first && ("task" in first || "input" in first) ? "quality" : "security";
+  const key = kind === "quality" ? "task" : "category";
+
   const histogram: Record<string, number> = {};
   for (const r of rows) {
     if (r && typeof r === "object") {
-      const cat = String((r as Record<string, unknown>).category ?? "unknown");
-      histogram[cat] = (histogram[cat] ?? 0) + 1;
+      const bucket = String((r as Record<string, unknown>)[key] ?? "unknown");
+      histogram[bucket] = (histogram[bucket] ?? 0) + 1;
     }
   }
   const relPath = relative(root, absPath);
@@ -48,6 +58,7 @@ function summarizeFile(root: string, absPath: string): DatasetSummary | null {
     path: relPath,
     name: absPath.split("/").pop()!.replace(/\.json$/i, ""),
     family: inferFamily(relPath),
+    kind,
     rowCount: rows.length,
     histogram,
     sizeBytes: statSync(absPath).size,

@@ -1,0 +1,12 @@
+{
+  "family": "agent",
+  "kind": "quality",
+  "tasks": ["tool_selection", "multi_step_task", "goal_completion", "rag_answer", "summarization", "classification", "extraction", "instruction_following"],
+  "metrics": ["goal_accuracy", "faithfulness", "answer_relevancy", "exact_match"],
+  "roles": ["end user", "power user"],
+  "count": 300,
+  "perCategoryFloor": 12,
+  "provider": "nim",
+  "generationModel": "meta/llama-3.3-70b-instruct",
+  "modelAlias": "generator"
+}

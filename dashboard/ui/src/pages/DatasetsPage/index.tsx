@@ -27,8 +27,10 @@ import {
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
-  mcp: "configs/datasets/nemo-mcp.preset.json",
-  agent: "configs/datasets/nemo-agent.preset.json",
+  "security-mcp": "configs/datasets/nemo-mcp.preset.json",
+  "security-agent": "configs/datasets/nemo-agent.preset.json",
+  "quality-mcp": "configs/datasets/nemo-mcp-quality.preset.json",
+  "quality-agent": "configs/datasets/nemo-agent-quality.preset.json",
 };
 
 function topCategories(hist: Record<string, number>, n = 4): string[] {
@@ -113,6 +115,7 @@ export function DatasetsPage() {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [trends, setTrends] = useState<EvalTrend[]>([]);
   const [loading, setLoading] = useState(true);
+  const [kind, setKind] = useState<"security" | "quality">("security");
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
@@ -146,9 +149,10 @@ export function DatasetsPage() {
     setError(null);
     setOk(null);
     try {
+      const dir = kind === "quality" ? `quality-${family}` : `nemo-${family}`;
       const res = await generateDataset({
-        preset: PRESETS[family],
-        out: `data/datasets/nemo-${family}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
+        preset: PRESETS[`${kind}-${family}`],
+        out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
         count,
         ...(seedConfigPath.trim()
           ? { seedConfigPath: seedConfigPath.trim() }
@@ -200,6 +204,21 @@ export function DatasetsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs">Kind</Label>
+              <div className="flex gap-1">
+                {(["security", "quality"] as const).map((k) => (
+                  <Button
+                    key={k}
+                    size="sm"
+                    variant={kind === k ? "default" : "outline"}
+                    onClick={() => setKind(k)}
+                  >
+                    {k}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Family</Label>
               <div className="flex gap-1">
@@ -269,7 +288,8 @@ export function DatasetsPage() {
           </div>
           <p className="text-xs text-muted-foreground">
             Writes to{" "}
-            <code>data/datasets/nemo-{family}/{outName || "v1"}.json</code>.
+            <code>data/datasets/{kind === "quality" ? "quality" : "nemo"}-{family}/{outName || "v1"}.json</code>.
+            {kind === "quality" ? " Quality datasets grade correctness against a reference and run on the quality scorer (not the security engine)." : " Security datasets are adversarial and run through the red-team engine."}
             Requires the NeMo Data Designer service to be reachable
             (<code>NEMO_DATA_DESIGNER_URL</code>) and a provider API key
             (<code>NVIDIA_API_KEY</code> for NIM or <code>OPENAI_API_KEY</code>{" "}
@@ -392,6 +412,9 @@ export function DatasetsPage() {
                         {d.name}
                       </span>
                       <Badge variant="outline">{d.family}</Badge>
+                      <Badge variant={d.kind === "quality" ? "secondary" : "outline"}>
+                        {d.kind}
+                      </Badge>
                       <Badge>{d.rowCount} rows</Badge>
                     </div>
                     <code className="text-xs text-muted-foreground break-all">

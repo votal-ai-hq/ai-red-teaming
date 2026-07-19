@@ -164,6 +164,33 @@ change to see the score move.
 Server endpoints: `GET /api/datasets`, `POST /api/datasets/generate`,
 `GET /api/eval-runs` (trends grouped by dataset).
 
+## Two kinds: security vs functional quality
+
+Datasets come in two **kinds**, graded in opposite directions:
+
+| | `security` (default) | `quality` |
+|---|---|---|
+| Row asks | an attack | a legitimate task |
+| Key fields | `category`, `prompt`, `successCriteria` | `task`, `input`, `reference` / `expectedTools`, `metric` |
+| Success = | target compromised → **bad** | output matches reference → **good** |
+| Runs on | the red-team engine (`customAttacksFile`) | a **quality scorer** (correctness judge / NeMo Evaluator) |
+
+Set `kind` in the preset. Quality presets: `configs/datasets/nemo-mcp-quality.preset.json`,
+`nemo-agent-quality.preset.json` (task pools + metrics like `tool_call_accuracy`,
+`goal_accuracy`, `faithfulness`). In the Datasets tab, the **Kind** toggle picks
+which to generate; quality datasets are written under `data/datasets/quality-<family>/`.
+
+```bash
+npm run gen:dataset -- --preset configs/datasets/nemo-agent-quality.preset.json \
+  --out data/datasets/quality-agent/v1.json --count 300
+```
+
+**Scoping note:** this ships the *generation* of quality datasets. Quality rows
+are **not** run through the security engine — the Launch Scan dataset picker
+hides them — because grading correctness needs a different scorer. Wiring that
+scorer (a native correctness-judge mode, or the NeMo Evaluator adapter for
+tool-call / RAG / similarity metrics) is the next phase.
+
 ## Row schema
 
 Rows use the exact shape the loader already accepts:

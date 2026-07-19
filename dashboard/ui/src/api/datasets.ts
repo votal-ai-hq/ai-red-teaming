@@ -4,6 +4,7 @@ export interface DatasetSummary {
   path: string;
   name: string;
   family: string;
+  kind: "security" | "quality";
   rowCount: number;
   histogram: Record<string, number>;
   sizeBytes: number;

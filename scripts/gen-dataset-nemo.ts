@@ -18,10 +18,17 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
+import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
-import { recordsToRows } from "../lib/dataset/map-records.js";
-import { validateRows, formatHistogram, underFloor } from "../lib/dataset/validate.js";
+import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
+import {
+  validateRows,
+  validateQualityRows,
+  formatHistogram,
+  underFloor,
+} from "../lib/dataset/validate.js";
 import { resolveCategoryPool } from "../lib/dataset/category-set.js";
+import { resolveQualityPool } from "../lib/dataset/quality-set.js";
 import { seedsFromAnalysis, mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
 import type { DatasetPreset, DatasetSeeds } from "../lib/dataset/types.js";
 import type { CodebaseAnalysis } from "../lib/types.js";
@@ -113,13 +120,20 @@ async function main(): Promise<void> {
     );
   }
 
+  const kind = preset.kind ?? "security";
   // Resolve pool early so a bad preset fails before any network call.
-  const pool = resolveCategoryPool(preset.family, preset.categories);
-  const config = buildDataDesignerConfig(preset, seeds);
+  const pool =
+    kind === "quality"
+      ? resolveQualityPool(preset.family, preset.tasks)
+      : resolveCategoryPool(preset.family, preset.categories);
+  const config =
+    kind === "quality"
+      ? buildQualityDataDesignerConfig(preset, seeds)
+      : buildDataDesignerConfig(preset, seeds);
   const client = new NemoDataDesignerClient();
 
   console.log(
-    `[gen] family=${preset.family} categories=${pool.length} ` +
+    `[gen] kind=${kind} family=${preset.family} ${kind === "quality" ? "tasks" : "categories"}=${pool.length} ` +
       `count=${preset.count ?? config.count} model=${config.model} ` +
       `mode=${args.preview ? "preview" : "generate"}`,
   );
@@ -128,8 +142,10 @@ async function main(): Promise<void> {
     ? await client.preview(config, Math.min(args.count ?? 5, 10))
     : await client.generate(config, preset.count);
 
-  const rows = recordsToRows(records, preset.family);
-  const { valid, errors, histogram, duplicatesDropped } = validateRows(rows);
+  const { valid, errors, histogram, duplicatesDropped } =
+    kind === "quality"
+      ? validateQualityRows(recordsToQualityRows(records))
+      : validateRows(recordsToRows(records, preset.family));
 
   console.log(`\n[gen] produced ${records.length} record(s)`);
   console.log(`[gen] valid ${valid.length}, dropped-duplicate ${duplicatesDropped}, invalid ${errors.length}`);

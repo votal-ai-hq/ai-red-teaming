@@ -32,9 +32,10 @@ import { seedsFromAnalysis } from "../lib/dataset/seed-from-analysis.js";
 import { analyzeCodebase } from "../lib/codebase-analyzer.js";
 import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
+import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
-import { recordsToRows } from "../lib/dataset/map-records.js";
-import { validateRows, formatHistogram } from "../lib/dataset/validate.js";
+import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
+import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
 import type { DatasetPreset } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
 import {
@@ -1656,12 +1657,17 @@ const server = createServer(
           };
         }
 
-        const ddConfig = buildDataDesignerConfig(preset, seeds);
+        const kind = preset.kind ?? "security";
+        const ddConfig =
+          kind === "quality"
+            ? buildQualityDataDesignerConfig(preset, seeds)
+            : buildDataDesignerConfig(preset, seeds);
         const client = new NemoDataDesignerClient();
         const records = await client.generate(ddConfig, preset.count);
-        const rows = recordsToRows(records, preset.family);
         const { valid, errors, histogram, duplicatesDropped } =
-          validateRows(rows);
+          kind === "quality"
+            ? validateQualityRows(recordsToQualityRows(records))
+            : validateRows(recordsToRows(records, preset.family));
 
         if (errors.length > 0 || valid.length === 0) {
           res.writeHead(422, { "Content-Type": "application/json" });

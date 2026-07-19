@@ -1,6 +1,15 @@
 # Spec: Synthetic Eval Datasets for Agents & MCP Servers via NeMo Data Designer
 
-**Status:** Phases 1–3 implemented (offline generator + presets + eval config + seeded-from-analysis + in-run `datasetGenerator` hook + tests). See [`docs/datasets.md`](../datasets.md) for usage.
+**Status:** Phases 1–3 implemented (offline generator + presets + eval config + seeded-from-analysis + in-run `datasetGenerator` hook + tests) plus UI (Datasets tab, Launch Scan integration, score-over-time) and OpenAI/NIM provider support. **Quality dataset kind** (functional-quality generation: task + reference/expectedTools + metric) is implemented for generation; the **quality scorer** that runs them (native correctness judge or NeMo Evaluator adapter) is the next phase. See [`docs/datasets.md`](../datasets.md).
+
+### Security vs quality datasets (the dual purpose)
+
+The platform evaluates on two axes and the dataset layer serves both:
+
+- **security** (default `kind`) — adversarial rows (`category`/`prompt`/`successCriteria`), graded on *compromise* by the native red-team engine. Fully wired end-to-end.
+- **quality** (`kind: "quality"`) — legitimate-task rows (`task`/`input`/`reference`/`expectedTools`/`metric`), graded on *correctness*. Own taxonomy (`lib/dataset/quality-set.ts`), own validator, own config builder. **Generation only** in this phase; quality rows are deliberately excluded from the security scan picker until a quality scorer exists.
+
+This keeps one dataset surface serving both "is it safe?" and "is it good?", with the grading direction and scorer differing by kind.
 **Branch:** `claude/eval-datasets-agents-mcp-xg64j9`
 **Author:** generated design spec
 **Scope:** Add a synthetic dataset-generation layer that uses NVIDIA NeMo Data Designer to produce attack/eval datasets for (a) agentic apps and (b) MCP servers, feeding the existing wb-red-team eval loop with zero changes to the executor or judge.

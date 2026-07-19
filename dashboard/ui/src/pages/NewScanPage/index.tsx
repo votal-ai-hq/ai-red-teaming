@@ -1756,7 +1756,7 @@ export default function NewScanPage() {
                     {!datasetFile && <CheckCircle className="w-3 h-3" />}
                     None
                   </button>
-                  {availableDatasets.map((d) => (
+                  {availableDatasets.filter((d) => d.kind !== "quality").map((d) => (
                     <button
                       key={d.path}
                       type="button"
