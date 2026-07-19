@@ -8,6 +8,10 @@ config.json
 config.local.json
 config-*.json
 !config.example.json
+# Bundled presets + example scan configs the dashboard reads at runtime.
+# Re-include after the config-*.json exclusion so nothing under configs/ is dropped.
+!configs
+!configs/**
 .git
 .gitignore
 .vscode
