@@ -4,10 +4,13 @@ import {
   generateDataset,
   listEvalRuns,
   listGenerationProviders,
+  listProfiles,
   type DatasetSummary,
   type EvalTrend,
   type GenerationProvider,
+  type ProfileSummary,
 } from "@/api/datasets";
+import { ProfileWizard } from "./ProfileWizard";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +29,7 @@ import {
   TrendingDown,
   Minus,
   LineChart,
+  Wand2,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -146,6 +150,9 @@ export function DatasetsPage() {
   const [model, setModel] = useState(FALLBACK_PROVIDERS[0].defaultModel);
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [profileId, setProfileId] = useState<string>("");
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [seedConfigPath, setSeedConfigPath] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,12 +161,14 @@ export function DatasetsPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [ds, tr] = await Promise.all([
+      const [ds, tr, pr] = await Promise.all([
         listDatasets(),
         listEvalRuns().catch(() => ({ trends: [] as EvalTrend[] })),
+        listProfiles().catch(() => ({ profiles: [] as ProfileSummary[] })),
       ]);
       setDatasets(ds.datasets);
       setTrends(tr.trends);
+      setProfiles(pr.profiles);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -201,6 +210,7 @@ export function DatasetsPage() {
         count,
         provider: providerId,
         ...(model.trim() ? { generationModel: model.trim() } : {}),
+        ...(profileId ? { profileId } : {}),
         ...(seedConfigPath.trim()
           ? { seedConfigPath: seedConfigPath.trim() }
           : {}),
@@ -208,8 +218,11 @@ export function DatasetsPage() {
       const seedNote = res.seeds
         ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
         : "";
+      const profileNote = res.profile
+        ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.rules} rules)`
+        : "";
       setOk(
-        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}`,
+        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}`,
       );
       await refresh();
     } catch (e) {
@@ -221,6 +234,15 @@ export function DatasetsPage() {
 
   return (
     <div className="p-6 space-y-6">
+      <ProfileWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        onSaved={async (name) => {
+          await refresh();
+          setProfileId(name);
+          setOk(`Saved app profile "${name}" — it will tailor the next dataset.`);
+        }}
+      />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Database className="w-5 h-5 text-primary" />
@@ -361,6 +383,51 @@ export function DatasetsPage() {
               generation with {provider.label} will fail until it is.
             </p>
           )}
+          <div className="space-y-1 rounded-lg border border-dashed border-border p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <Label className="text-xs flex items-center gap-1.5">
+                <Wand2 className="w-3.5 h-3.5 text-primary" />
+                Tailor to my app (optional)
+              </Label>
+              <Button size="sm" variant="outline" onClick={() => setWizardOpen(true)}>
+                <Wand2 className="w-3.5 h-3.5" />
+                Customize for my app
+              </Button>
+            </div>
+            {profiles.length > 0 ? (
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <Button
+                  size="sm"
+                  variant={profileId === "" ? "default" : "outline"}
+                  onClick={() => setProfileId("")}
+                >
+                  Generic
+                </Button>
+                {profiles.map((p) => (
+                  <Button
+                    key={p.name}
+                    size="sm"
+                    variant={profileId === p.name ? "default" : "outline"}
+                    onClick={() => setProfileId(p.name)}
+                    title={
+                      p.description
+                        ? `${p.description} — ${p.toolCount} tools, ${p.ruleCount} rules`
+                        : `${p.toolCount} tools, ${p.ruleCount} rules`
+                    }
+                  >
+                    {p.name}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground pt-1">
+                No app profiles yet. Import your system prompt, MCP manifest, or
+                OpenAPI spec — attacks will reference your app's real domain,
+                rules, and high-value tools.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-1">
             <Label className="text-xs" htmlFor="seedConfig">
               Seed from target analysis (optional)

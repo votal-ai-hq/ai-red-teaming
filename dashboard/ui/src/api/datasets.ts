@@ -38,6 +38,55 @@ export function listGenerationProviders() {
   );
 }
 
+// --- App profiles (tailor generation to a specific target app) ---
+
+export interface ProfileTool {
+  name: string;
+  description?: string;
+  sensitive?: boolean;
+}
+
+export interface AppProfile {
+  name: string;
+  description?: string;
+  systemPrompt?: string;
+  businessRules?: string[];
+  tools?: ProfileTool[];
+  roles?: string[];
+  dataClasses?: string[];
+  source?: string;
+}
+
+export interface ProfileSummary {
+  name: string;
+  description?: string;
+  source?: string;
+  toolCount: number;
+  ruleCount: number;
+  roleCount: number;
+}
+
+export type ImportFormat = "system-prompt" | "mcp-manifest" | "openapi";
+
+export function listProfiles() {
+  return apiFetch<{ profiles: ProfileSummary[] }>("/api/datasets/profiles");
+}
+
+/** Parse an artifact into a draft profile (not saved). */
+export function importProfile(format: ImportFormat, content: string) {
+  return apiFetch<{ profile: Partial<AppProfile> }>(
+    "/api/datasets/profiles/import",
+    { method: "POST", body: JSON.stringify({ format, content }) },
+  );
+}
+
+export function saveProfile(profile: AppProfile) {
+  return apiFetch<{ ok: true; path: string }>("/api/datasets/profiles", {
+    method: "POST",
+    body: JSON.stringify(profile),
+  });
+}
+
 export interface GenerateDatasetResponse {
   out: string;
   rowCount: number;
@@ -46,6 +95,8 @@ export interface GenerateDatasetResponse {
   summary: string;
   /** Present when seedConfigPath was used. */
   seeds?: { roles: number; surfaces: number };
+  /** Present when a profileId / inline profile tailored generation. */
+  profile?: { name: string; tools: number; rules: number };
 }
 
 export function listDatasets() {
