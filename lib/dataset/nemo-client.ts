@@ -71,20 +71,48 @@ export class NemoDataDesignerClient {
     return h;
   }
 
+  /** The resolved service base url (for error reporting / diagnostics). */
+  get url(): string {
+    return this.baseUrl;
+  }
+
   private async post(path: string, body: unknown): Promise<unknown> {
     const url = `${this.baseUrl}${path}`;
-    const res = await this.fetchImpl(url, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const code =
+        (err as { cause?: { code?: string } }).cause?.code ??
+        (err as Error).message;
+      throw new Error(
+        `Data Designer is unreachable at ${this.baseUrl} (${code}). ` +
+          `Start the Data Designer service, or point NEMO_DATA_DESIGNER_URL at a running deployment.`,
+      );
+    }
     const text = await res.text();
     if (!res.ok) {
       throw new Error(
         `Data Designer ${path} -> HTTP ${res.status}: ${text.slice(0, 500)}`,
       );
     }
-    return text ? JSON.parse(text) : {};
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      // A 200 with an HTML/non-JSON body means the URL answered but is not a
+      // Data Designer API (e.g. another web app is squatting on the port).
+      const snippet = text.slice(0, 120).replace(/\s+/g, " ");
+      throw new Error(
+        `Data Designer ${path} at ${this.baseUrl} returned HTTP ${res.status} with a non-JSON body ` +
+          `("${snippet}..."). The URL answered but does not look like a Data Designer API — ` +
+          `check that NEMO_DATA_DESIGNER_URL points at the Data Designer service, not another app.`,
+      );
+    }
   }
 
   /**

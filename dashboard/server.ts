@@ -1758,11 +1758,14 @@ const server = createServer(
         );
       } catch (err) {
         // Fail-soft messaging: Data Designer down / no creds is the common case.
+        const ddUrl = process.env.NEMO_DATA_DESIGNER_URL;
         res.writeHead(502, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
             error: "dataset generation failed",
             detail: formatErrorDetails(err),
+            dataDesignerUrl:
+              ddUrl ?? "http://localhost:8080 (default — NEMO_DATA_DESIGNER_URL is not set)",
             hint: "Ensure the NeMo Data Designer service is reachable (NEMO_DATA_DESIGNER_URL) and a provider API key is set (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).",
           }),
         );

@@ -15,7 +15,10 @@ import {
 } from "../lib/dataset/validate.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { recordToRow } from "../lib/dataset/map-records.js";
-import { extractRecords } from "../lib/dataset/nemo-client.js";
+import {
+  extractRecords,
+  NemoDataDesignerClient,
+} from "../lib/dataset/nemo-client.js";
 import { loadCustomAttacksFromConfig } from "../lib/custom-attacks-loader.js";
 import { listDatasets } from "../lib/dataset/list.js";
 import type { Config } from "../lib/types.js";
@@ -148,6 +151,64 @@ describe("recordToRow", () => {
     expect(String(row.description)).toMatch(/family=mcp/);
     // The mapped row passes strict validation.
     expect(validateRows([row]).valid).toHaveLength(1);
+  });
+});
+
+describe("NemoDataDesignerClient error handling", () => {
+  const config = { columns: [] } as never;
+
+  const clientWith = (fetchImpl: typeof fetch) =>
+    new NemoDataDesignerClient({
+      baseUrl: "http://dd.example:8080",
+      fetchImpl,
+    });
+
+  it("returns records on a well-formed JSON response", async () => {
+    const client = clientWith(async () =>
+      new Response(JSON.stringify({ records: [{ a: 1 }] }), { status: 200 }),
+    );
+    await expect(client.generate(config, 1)).resolves.toEqual([{ a: 1 }]);
+  });
+
+  it("explains an HTML 200 response instead of throwing a JSON.parse error", async () => {
+    const client = clientWith(async () =>
+      new Response("<!doctype html><html><body>a web app</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /non-JSON body.*<!doctype html.*NEMO_DATA_DESIGNER_URL/s,
+    );
+    // The old failure mode must not resurface.
+    await expect(client.generate(config, 1)).rejects.not.toThrow(
+      /Unexpected token/,
+    );
+  });
+
+  it("explains a connection failure with the resolved base url", async () => {
+    const client = clientWith(async () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ECONNREFUSED" },
+      });
+    });
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /unreachable at http:\/\/dd\.example:8080 \(ECONNREFUSED\)/,
+    );
+  });
+
+  it("still reports HTTP error statuses with the body snippet", async () => {
+    const client = clientWith(async () =>
+      new Response("upstream exploded", { status: 500 }),
+    );
+    await expect(client.generate(config, 1)).rejects.toThrow(
+      /HTTP 500: upstream exploded/,
+    );
+  });
+
+  it("exposes the resolved base url for diagnostics", () => {
+    const client = clientWith(fetch);
+    expect(client.url).toBe("http://dd.example:8080");
   });
 });
 
