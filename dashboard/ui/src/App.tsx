@@ -10,6 +10,7 @@ import CompliancePage from "@/pages/CompliancePage";
 import AuditPage from "@/pages/AuditPage";
 import GuardrailsPage from "@/pages/GuardrailsPage";
 import DatasetsPage from "@/pages/DatasetsPage";
+import EvaluationsPage from "@/pages/EvaluationsPage";
 
 export function App() {
   return (
@@ -27,6 +28,7 @@ export function App() {
             <Route path="/activity-log" element={<AuditPage />} />
             <Route path="/policies" element={<GuardrailsPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
+            <Route path="/evaluations" element={<EvaluationsPage />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
