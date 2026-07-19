@@ -52,11 +52,18 @@ export interface ProfileTool {
   sensitive?: boolean;
 }
 
+export interface Policy {
+  name: string;
+  criteria: string;
+  types?: string[];
+}
+
 export interface AppProfile {
   name: string;
   description?: string;
   systemPrompt?: string;
   businessRules?: string[];
+  policies?: Policy[];
   tools?: ProfileTool[];
   roles?: string[];
   dataClasses?: string[];
@@ -69,10 +76,15 @@ export interface ProfileSummary {
   source?: string;
   toolCount: number;
   ruleCount: number;
+  policyCount: number;
   roleCount: number;
 }
 
-export type ImportFormat = "system-prompt" | "mcp-manifest" | "openapi";
+export type ImportFormat =
+  | "system-prompt"
+  | "mcp-manifest"
+  | "openapi"
+  | "policy-doc";
 
 export function listProfiles() {
   return apiFetch<{ profiles: ProfileSummary[] }>("/api/datasets/profiles");
@@ -102,7 +114,7 @@ export interface GenerateDatasetResponse {
   /** Present when seedConfigPath was used. */
   seeds?: { roles: number; surfaces: number };
   /** Present when a profileId / inline profile tailored generation. */
-  profile?: { name: string; tools: number; rules: number };
+  profile?: { name: string; tools: number; rules: number; policies: number };
   /** Present when multi-turn generation was used. */
   turnMode?: "multi";
   maxTurns?: number;

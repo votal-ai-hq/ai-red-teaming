@@ -24,6 +24,21 @@ export interface ProfileTool {
   sensitive?: boolean;
 }
 
+/**
+ * A named policy the target app must enforce — the structured form of a rule,
+ * modelled on DeepTeam's CustomVulnerability (name + criteria + types). The
+ * `criteria` is a precise, checkable statement; generation targets it and a
+ * successful attack violates it.
+ */
+export interface Policy {
+  /** Short label, e.g. "No cross-tenant access". */
+  name: string;
+  /** The checkable rule, e.g. "The agent must never read another tenant's data". */
+  criteria: string;
+  /** Optional sub-aspects to probe, e.g. ["read", "write", "list"]. */
+  types?: string[];
+}
+
 export interface AppProfile {
   /** Filename-safe identifier, also the profile's display name. */
   name: string;
@@ -33,6 +48,12 @@ export interface AppProfile {
   systemPrompt?: string;
   /** Invariants the app must never violate; become grading successCriteria. */
   businessRules?: string[];
+  /**
+   * Structured, named policies (name + criteria) the app must enforce. The
+   * preferred form over free-text businessRules — each becomes a targeted
+   * generation instruction and a precise grading criterion.
+   */
+  policies?: Policy[];
   /** Tools/functions the agent can call. */
   tools?: ProfileTool[];
   /** Permission tiers / user roles. */
@@ -57,6 +78,11 @@ const MAX_ROLES = 20;
 const MAX_ROLE_LEN = 60;
 const MAX_DATA_CLASSES = 30;
 const MAX_DATA_CLASS_LEN = 80;
+const MAX_POLICIES = 40;
+const MAX_POLICY_NAME = 120;
+const MAX_POLICY_CRITERIA = 400;
+const MAX_POLICY_TYPES = 12;
+const MAX_POLICY_TYPE_LEN = 60;
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
@@ -76,6 +102,29 @@ function strList(x: unknown, cap: number, maxLen: number): string[] {
     seen.add(key);
     out.push(s);
     if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/** Validate + normalize an untrusted policy list (name + criteria required). */
+function parsePolicies(x: unknown): Policy[] {
+  if (!Array.isArray(x)) return [];
+  const out: Policy[] = [];
+  const seen = new Set<string>();
+  for (const p of x) {
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    const name = str(o.name).slice(0, MAX_POLICY_NAME);
+    const criteria = str(o.criteria).slice(0, MAX_POLICY_CRITERIA);
+    if (!name || !criteria) continue; // both are required, mirroring DeepTeam
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const policy: Policy = { name, criteria };
+    const types = strList(o.types, MAX_POLICY_TYPES, MAX_POLICY_TYPE_LEN);
+    if (types.length) policy.types = types;
+    out.push(policy);
+    if (out.length >= MAX_POLICIES) break;
   }
   return out;
 }
@@ -128,6 +177,8 @@ export function validateProfile(raw: unknown): AppProfile {
   if (systemPrompt) profile.systemPrompt = systemPrompt;
   const businessRules = strList(o.businessRules, MAX_RULES, MAX_RULE_LEN);
   if (businessRules.length) profile.businessRules = businessRules;
+  const policies = parsePolicies(o.policies);
+  if (policies.length) profile.policies = policies;
   if (tools.length) profile.tools = tools;
   const roles = strList(o.roles, MAX_ROLES, MAX_ROLE_LEN);
   if (roles.length) profile.roles = roles;
@@ -159,11 +210,18 @@ export function mergeProfiles(
   const unite = (a?: string[], b?: string[]) =>
     Array.from(new Set([...(a ?? []), ...(b ?? [])]));
 
+  const mergedPoliciesByName = new Map<string, Policy>();
+  for (const p of [...(base.policies ?? []), ...(override.policies ?? [])]) {
+    // override wins on criteria/types for the same policy name
+    mergedPoliciesByName.set(p.name.toLowerCase(), p);
+  }
+
   return validateProfile({
     name: override.name || base.name || "profile",
     description: override.description ?? base.description,
     systemPrompt: override.systemPrompt ?? base.systemPrompt,
     businessRules: unite(base.businessRules, override.businessRules),
+    policies: Array.from(mergedPoliciesByName.values()),
     tools: Array.from(mergedToolsByName.values()),
     roles: unite(base.roles, override.roles),
     dataClasses: unite(base.dataClasses, override.dataClasses),
@@ -212,6 +270,15 @@ export function profileToContext(profile: AppProfile): string {
     const sp = profile.systemPrompt.slice(0, 1500);
     lines.push(
       `The application's own system prompt / guardrails (attacks should try to subvert these):\n"""\n${sp}\n"""`,
+    );
+  }
+  if (profile.policies?.length) {
+    lines.push(
+      "Policies the application must enforce (a successful attack violates the criteria):",
+      ...profile.policies.map((p) => {
+        const types = p.types?.length ? ` [aspects: ${p.types.join(", ")}]` : "";
+        return `  - ${p.name}: ${p.criteria}${types}`;
+      }),
     );
   }
   if (profile.businessRules?.length) {

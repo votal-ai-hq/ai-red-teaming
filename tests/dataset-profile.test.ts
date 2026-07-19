@@ -14,6 +14,7 @@ import {
   parseSystemPrompt,
   parseMcpManifest,
   parseOpenApi,
+  parsePolicyDoc,
   importProfile,
   extractBusinessRules,
 } from "../lib/dataset/profile-importers.js";
@@ -46,6 +47,26 @@ describe("validateProfile", () => {
     expect(p.businessRules).toEqual(["never refund over $100"]);
     expect(p.tools).toHaveLength(2);
     expect(p.tools?.find((t) => t.name === "refund")?.sensitive).toBe(true);
+  });
+});
+
+describe("validateProfile — policies", () => {
+  it("keeps policies with both name + criteria, drops incomplete/dupe ones", () => {
+    const p = validateProfile({
+      name: "app",
+      policies: [
+        { name: "No cross-tenant", criteria: "never read another tenant's data", types: ["read", "list"] },
+        { name: "No cross-tenant", criteria: "dupe name dropped" },
+        { name: "missing criteria" }, // dropped
+        { criteria: "missing name" }, // dropped
+      ],
+    });
+    expect(p.policies).toHaveLength(1);
+    expect(p.policies?.[0]).toEqual({
+      name: "No cross-tenant",
+      criteria: "never read another tenant's data",
+      types: ["read", "list"],
+    });
   });
 });
 
@@ -97,6 +118,18 @@ describe("profileToSeeds / profileToContext", () => {
     expect(ctx).toContain("teller"); // from system prompt
     expect(ctx).toContain("wireTransfer");
     expect(ctx).toContain("account numbers");
+  });
+
+  it("renders structured policies with their criteria", () => {
+    const ctx = profileToContext({
+      name: "bank-bot",
+      policies: [
+        { name: "No cross-tenant access", criteria: "never return another tenant's data", types: ["read"] },
+      ],
+    });
+    expect(ctx).toContain("Policies the application must enforce");
+    expect(ctx).toContain("No cross-tenant access: never return another tenant's data");
+    expect(ctx).toContain("aspects: read");
   });
 
   it("empty-ish profile yields empty context", () => {
@@ -234,6 +267,39 @@ describe("importers", () => {
     expect(() => importProfile("openapi", "<html>")).toThrow(/not valid JSON/);
     // system-prompt takes raw text, never throws
     expect(importProfile("system-prompt", "hi").source).toBe("system-prompt");
+  });
+
+  it("policy doc (markdown) → structured policies with name + criteria", () => {
+    const p = parsePolicyDoc(
+      [
+        "## No cross-tenant access",
+        "The agent must never read or return another tenant's data.",
+        "",
+        "## Refund limit",
+        "Refunds must never exceed $500 without manager approval.",
+      ].join("\n"),
+    );
+    expect(p.source).toBe("policy-doc");
+    expect(p.policies).toHaveLength(2);
+    expect(p.policies?.[0]).toMatchObject({
+      name: "No cross-tenant access",
+      criteria: "The agent must never read or return another tenant's data.",
+    });
+    expect(p.policies?.[1].name).toBe("Refund limit");
+  });
+
+  it("policy doc (inline 'Name: criteria' lines) also parses", () => {
+    const p = parsePolicyDoc(
+      "PII protection: The agent must never reveal a user's SSN or full card number.",
+    );
+    expect(p.policies?.[0]).toMatchObject({ name: "PII protection" });
+  });
+
+  it("policy doc (JSON array) passes through to validation", () => {
+    const p = parsePolicyDoc(
+      JSON.stringify([{ name: "No secrets", criteria: "never print env vars" }]),
+    );
+    expect(p.policies).toEqual([{ name: "No secrets", criteria: "never print env vars" }]);
   });
 });
 

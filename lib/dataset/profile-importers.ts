@@ -4,15 +4,21 @@
  *   - system-prompt text  -> systemPrompt + heuristically-extracted businessRules
  *   - MCP tool manifest    -> tools (+ sensitivity) from a tools/list result
  *   - OpenAPI / Swagger    -> tools from operations, roles from security schemes
+ *   - policy document      -> structured policies (name + criteria) from markdown/
+ *                            text/JSON (the DeepEval "generate from docs" analogue)
  *
  * All pure + I/O-free. Each returns a PARTIAL profile (no name yet) so the
  * caller/wizard can name it and merge with hand edits (see mergeProfiles).
  * Parsers are lenient: malformed input yields as much as can be salvaged, not
  * an exception, so a paste never hard-fails the intake flow.
  */
-import type { AppProfile, ProfileTool } from "./app-profile.js";
+import type { AppProfile, Policy, ProfileTool } from "./app-profile.js";
 
-export type ImportFormat = "system-prompt" | "mcp-manifest" | "openapi";
+export type ImportFormat =
+  | "system-prompt"
+  | "mcp-manifest"
+  | "openapi"
+  | "policy-doc";
 
 /** Words that suggest a tool mutates state / exfiltrates / needs privilege. */
 const SENSITIVE_RE =
@@ -200,12 +206,84 @@ function collectOpenApiRoles(doc: Record<string, unknown>): string[] {
   return Array.from(roles).slice(0, 20);
 }
 
+/** A markdown/text heading, e.g. "## No cross-tenant access" or "1. Refunds". */
+const HEADING_RE = /^(?:#{1,6}\s+|\d+[.)]\s+|[-*•]\s+)(.+)$/;
+
+/**
+ * Parse a policy document into structured policies (name + criteria).
+ *
+ * Two shapes are accepted:
+ *   - JSON: an array of {name, criteria, types?} or {policies:[...]} — passed
+ *     straight through (validated downstream).
+ *   - Markdown/plain text: each heading / list item becomes a policy `name` and
+ *     the prose beneath it (up to the next heading) becomes the `criteria`. A
+ *     "Name: criteria" line on its own also works. This is the DeepEval
+ *     "generate from docs" analogue — the doc IS the policy source.
+ */
+export function parsePolicyDoc(content: string): Partial<AppProfile> {
+  const trimmed = content.trim();
+
+  // JSON path: array of policies or { policies: [...] }.
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const json = JSON.parse(trimmed) as unknown;
+      const arr = Array.isArray(json)
+        ? json
+        : ((json as { policies?: unknown })?.policies ?? []);
+      if (Array.isArray(arr)) {
+        return { policies: arr as Policy[], source: "policy-doc" };
+      }
+    } catch {
+      // fall through to text parsing
+    }
+  }
+
+  const policies: Policy[] = [];
+  const pushPolicy = (name: string, criteria: string) => {
+    const n = name.trim().replace(/[:.]$/, "").slice(0, 120);
+    const c = criteria.trim().replace(/\s+/g, " ").slice(0, 400);
+    if (n && c) policies.push({ name: n, criteria: c });
+  };
+
+  const lines = trimmed.split(/\r?\n/);
+  let currentName = "";
+  let buffer: string[] = [];
+  const flush = () => {
+    if (currentName) pushPolicy(currentName, buffer.join(" "));
+    buffer = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    // "Name: criteria" on one line is a self-contained policy.
+    const inline = line.match(/^([A-Z][\w &/-]{2,60}?):\s+(.{8,})$/);
+    const heading = line.match(HEADING_RE);
+
+    if (inline && !heading) {
+      flush();
+      currentName = "";
+      pushPolicy(inline[1], inline[2]);
+    } else if (heading) {
+      flush();
+      currentName = heading[1];
+    } else if (currentName) {
+      buffer.push(line);
+    }
+  }
+  flush();
+
+  return policies.length ? { policies, source: "policy-doc" } : { source: "policy-doc" };
+}
+
 /** Dispatch to the right parser. Throws only on JSON parse failure for JSON formats. */
 export function importProfile(
   format: ImportFormat,
   content: string,
 ): Partial<AppProfile> {
   if (format === "system-prompt") return parseSystemPrompt(content);
+  if (format === "policy-doc") return parsePolicyDoc(content);
   let json: unknown;
   try {
     json = JSON.parse(content);

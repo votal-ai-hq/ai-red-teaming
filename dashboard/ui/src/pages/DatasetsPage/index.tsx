@@ -222,7 +222,7 @@ export function DatasetsPage() {
         ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
         : "";
       const profileNote = res.profile
-        ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.rules} rules)`
+        ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.policies} policies, ${res.profile.rules} rules)`
         : "";
       const turnNote =
         res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
