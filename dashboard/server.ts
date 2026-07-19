@@ -38,6 +38,21 @@ import {
   DATASET_PROVIDERS,
   applyGenerationOverrides,
 } from "../lib/dataset/provider-options.js";
+import {
+  profileToSeeds,
+  mergeProfiles,
+  validateProfile,
+} from "../lib/dataset/app-profile.js";
+import {
+  listProfiles,
+  loadProfile,
+  saveProfile,
+} from "../lib/dataset/profile-store.js";
+import {
+  importProfile,
+  type ImportFormat,
+} from "../lib/dataset/profile-importers.js";
+import { mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
 import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
 import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
@@ -1627,6 +1642,75 @@ const server = createServer(
     // Body: { preset: string, count?: number, out: string, seedFromAnalysisConfig?: object }
     // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider
     // API key (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).
+    // API: reusable app profiles (list). Profiles tailor generated datasets to
+    // a specific target app — see lib/dataset/app-profile.ts.
+    if (url.pathname === "/api/datasets/profiles" && req.method === "GET") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ profiles: listProfiles(repoRoot) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: save a reusable app profile.
+    if (url.pathname === "/api/datasets/profiles" && req.method === "POST") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req));
+        const path = saveProfile(repoRoot, body);
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, path }));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: parse an artifact (system prompt / MCP manifest / OpenAPI) into a
+    // draft profile the wizard can review and edit before saving.
+    if (
+      url.pathname === "/api/datasets/profiles/import" &&
+      req.method === "POST"
+    ) {
+      try {
+        const body = JSON.parse(await readBody(req)) as {
+          format?: string;
+          content?: string;
+        };
+        const formats: ImportFormat[] = [
+          "system-prompt",
+          "mcp-manifest",
+          "openapi",
+        ];
+        if (!formats.includes(body.format as ImportFormat)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: `format must be one of: ${formats.join(", ")}`,
+            }),
+          );
+          return;
+        }
+        if (typeof body.content !== "string" || !body.content.trim()) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "content is required" }));
+          return;
+        }
+        const draft = importProfile(body.format as ImportFormat, body.content);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ profile: draft }));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
     // API: generation providers + whether their API key is configured, so the
     // UI can offer an informed provider/model choice (single source of truth
     // is lib/dataset/provider-options.ts).
@@ -1669,6 +1753,10 @@ const server = createServer(
           seedConfigPath?: string;
           provider?: string;
           generationModel?: string;
+          /** Name of a saved AppProfile to tailor generation to a target app. */
+          profileId?: string;
+          /** Inline AppProfile (from the wizard, not yet/necessarily saved). */
+          profile?: unknown;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1751,6 +1839,26 @@ const server = createServer(
           };
         }
 
+        // Optional: tailor generation to a target app via a saved profile
+        // (profileId) or an inline profile from the wizard. Its roles/tools
+        // become samplers and its context is injected into the prompt. Profile
+        // seeds are merged over any codebase-analysis seeds.
+        let profileInfo: { name: string; tools: number; rules: number } | undefined;
+        if (body.profileId || body.profile !== undefined) {
+          const profile = body.profileId
+            ? loadProfile(repoRoot, String(body.profileId))
+            : validateProfile(body.profile);
+          const profileSeeds = profileToSeeds(profile);
+          seeds = mergeSeeds(profileSeeds, seeds) ?? profileSeeds;
+          // mergeSeeds doesn't carry context; keep the profile's context block.
+          if (profileSeeds.context) seeds.context = profileSeeds.context;
+          profileInfo = {
+            name: profile.name,
+            tools: profile.tools?.length ?? 0,
+            rules: profile.businessRules?.length ?? 0,
+          };
+        }
+
         const kind = preset.kind ?? "security";
         const ddConfig =
           kind === "quality"
@@ -1788,6 +1896,7 @@ const server = createServer(
             histogram,
             summary: formatHistogram(histogram),
             ...(seedInfo ? { seeds: seedInfo } : {}),
+            ...(profileInfo ? { profile: profileInfo } : {}),
           }),
         );
       } catch (err) {

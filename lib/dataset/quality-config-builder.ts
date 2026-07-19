@@ -20,30 +20,46 @@ const DEFAULT_MODEL = "meta/llama-3.3-70b-instruct";
 const DEFAULT_ALIAS = "generator";
 const DEFAULT_PROVIDER = "nim";
 
-const INPUT_TEMPLATE = [
-  "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
-  "legitimate task the agent should handle correctly (not an attack).",
-  "",
-  "Task type: {{task}}",
-  "Graded on metric: {{metric}}",
-  "Acting as: {{role}}",
-  "Available surface: {{surface}}",
-  "",
-  "Write one realistic user request for this task. Output ONLY the user's",
-  "message — concrete and specific, no preamble.",
-].join("\n");
+/** A profile-derived context block, formatted as a prompt preamble (or ""). */
+function contextPreamble(context?: string): string {
+  if (!context || !context.trim()) return "";
+  return [
+    "",
+    "TARGET APPLICATION CONTEXT (tailor the case to this specific app):",
+    context.trim(),
+    "",
+  ].join("\n");
+}
 
-const REFERENCE_TEMPLATE = [
-  "Given this functional eval case, produce the grading reference.",
-  "",
-  "Task type: {{task}}",
-  "Metric: {{metric}}",
-  "User request: {{input}}",
-  "",
-  "Return: reference = the ideal correct answer (concise); expectedTools = a",
-  "JSON array of the tool name(s) a correct agent would call, in order (empty",
-  "array if the task needs no tools).",
-].join("\n");
+function inputTemplate(context?: string): string {
+  return [
+    "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
+    "legitimate task the agent should handle correctly (not an attack).",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Graded on metric: {{metric}}",
+    "Acting as: {{role}}",
+    "Available surface: {{surface}}",
+    "",
+    "Write one realistic user request for this task, specific to the target",
+    "application's domain and tools when context is given. Output ONLY the",
+    "user's message — concrete and specific, no preamble.",
+  ].join("\n");
+}
+
+function referenceTemplate(context?: string): string {
+  return [
+    "Given this functional eval case, produce the grading reference.",
+    contextPreamble(context),
+    "Task type: {{task}}",
+    "Metric: {{metric}}",
+    "User request: {{input}}",
+    "",
+    "Return: reference = the ideal correct answer (concise); expectedTools = a",
+    "JSON array of the tool name(s) a correct agent would call, in order (empty",
+    "array if the task needs no tools).",
+  ].join("\n");
+}
 
 /**
  * Build a quality-dataset Data Designer config. Sampler columns (task, metric,
@@ -73,14 +89,14 @@ export function buildQualityDataDesignerConfig(
     type: "llm-text",
     name: "input",
     modelAlias,
-    prompt: INPUT_TEMPLATE,
+    prompt: inputTemplate(seeds?.context),
   };
 
   const refCol: LlmStructuredColumn = {
     type: "llm-structured",
     name: "grading",
     modelAlias,
-    prompt: REFERENCE_TEMPLATE,
+    prompt: referenceTemplate(seeds?.context),
     outputFields: [
       { name: "reference", description: "the ideal correct answer" },
       { name: "expectedTools", description: "JSON array of tool names a correct agent would call" },

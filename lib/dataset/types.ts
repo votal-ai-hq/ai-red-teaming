@@ -82,10 +82,16 @@ export interface DatasetPreset {
   provider?: string;
 }
 
-/** Optional seed inputs (Phase 2: derived from CodebaseAnalysis). */
+/** Optional seed inputs (Phase 2: derived from CodebaseAnalysis or an AppProfile). */
 export interface DatasetSeeds {
   roles?: string[];
   surfaces?: string[];
+  /**
+   * App-context preamble injected into the generation prompt so generated
+   * attacks/grading reference the target's real domain, rules, and data.
+   * Populated from an AppProfile (see lib/dataset/app-profile.ts).
+   */
+  context?: string;
 }
 
 /** Result of validating a batch of rows. */
