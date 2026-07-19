@@ -66,6 +66,15 @@ export interface DatasetPreset {
   roles?: string[];
   /** MCP surface elements (tool/prompt/resource names). Optional; falls back to seeds. */
   surfaces?: string[];
+  /**
+   * Conversation shape of generated attacks. "single" (default) produces a
+   * one-message attack; "multi" produces a [Turn N] escalation transcript the
+   * runtime replays turn-by-turn (see lib/custom-attacks-loader.ts). Multi-turn
+   * applies to security datasets only.
+   */
+  turnMode?: "single" | "multi";
+  /** Max conversation turns when turnMode="multi" (clamped to 2..8). Default 3. */
+  maxTurns?: number;
   /** Total rows to generate. */
   count?: number;
   /** Minimum rows per category (balance floor). */

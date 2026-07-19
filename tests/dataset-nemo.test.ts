@@ -112,6 +112,43 @@ describe("buildDataDesignerConfig", () => {
     expect(cat && "values" in cat && cat.values).toEqual(["tool_misuse"]);
   });
 
+  it("single-turn (default) emits no turns sampler and the single-message template", () => {
+    const config = buildDataDesignerConfig({ family: "mcp", count: 5 });
+    expect(config.columns.some((c) => c.name === "turns")).toBe(false);
+    const promptCol = config.columns.find((c) => c.name === "prompt");
+    const text = promptCol && "prompt" in promptCol ? promptCol.prompt : "";
+    expect(text).toContain("Write ONE realistic attacker message");
+    expect(text).not.toContain("[Turn 1]");
+  });
+
+  it("multi-turn adds a turns sampler (2..maxTurns) and the transcript template", () => {
+    const config = buildDataDesignerConfig({
+      family: "mcp",
+      count: 5,
+      turnMode: "multi",
+      maxTurns: 4,
+    });
+    const turns = config.columns.find((c) => c.name === "turns");
+    expect(turns && "values" in turns && turns.values).toEqual(["2", "3", "4"]);
+    // turns sampler must precede the LLM prompt column (DD seed-before-LLM rule)
+    const turnsIdx = config.columns.findIndex((c) => c.name === "turns");
+    const promptIdx = config.columns.findIndex((c) => c.name === "prompt");
+    expect(turnsIdx).toBeLessThan(promptIdx);
+    const promptCol = config.columns[promptIdx];
+    const text = "prompt" in promptCol ? promptCol.prompt : "";
+    expect(text).toContain("{{turns}}-message attacker");
+    expect(text).toContain("[Turn 1]");
+  });
+
+  it("clamps maxTurns into 2..8", () => {
+    const lo = buildDataDesignerConfig({ family: "mcp", turnMode: "multi", maxTurns: 1 });
+    const loTurns = lo.columns.find((c) => c.name === "turns");
+    expect(loTurns && "values" in loTurns && loTurns.values).toEqual(["2"]);
+    const hi = buildDataDesignerConfig({ family: "mcp", turnMode: "multi", maxTurns: 99 });
+    const hiTurns = hi.columns.find((c) => c.name === "turns");
+    expect(hiTurns && "values" in hiTurns && (hiTurns.values as string[]).length).toBe(7);
+  });
+
   it("defaults to the nim provider", () => {
     const config = buildDataDesignerConfig({ family: "mcp" });
     expect(config.modelProvider).toBe("nim");

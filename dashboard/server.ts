@@ -1757,6 +1757,10 @@ const server = createServer(
           profileId?: string;
           /** Inline AppProfile (from the wizard, not yet/necessarily saved). */
           profile?: unknown;
+          /** "single" (default) or "multi" — multi emits [Turn N] transcripts. */
+          turnMode?: "single" | "multi";
+          /** Max turns for multi-turn generation (clamped to 2..8). */
+          maxTurns?: number;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1790,6 +1794,12 @@ const server = createServer(
           readFileSync(presetAbs, "utf-8"),
         ) as DatasetPreset;
         if (body.count) preset.count = body.count;
+        if (body.turnMode === "single" || body.turnMode === "multi") {
+          preset.turnMode = body.turnMode;
+        }
+        if (typeof body.maxTurns === "number" && Number.isFinite(body.maxTurns)) {
+          preset.maxTurns = body.maxTurns;
+        }
         const overrideError = applyGenerationOverrides(preset, {
           provider: body.provider,
           generationModel: body.generationModel,
@@ -1897,6 +1907,9 @@ const server = createServer(
             summary: formatHistogram(histogram),
             ...(seedInfo ? { seeds: seedInfo } : {}),
             ...(profileInfo ? { profile: profileInfo } : {}),
+            ...(kind === "security" && preset.turnMode === "multi"
+              ? { turnMode: "multi", maxTurns: Math.min(8, Math.max(2, preset.maxTurns ?? 3)) }
+              : {}),
           }),
         );
       } catch (err) {

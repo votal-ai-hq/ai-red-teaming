@@ -20,6 +20,12 @@ export interface GenerateDatasetRequest {
   provider?: string;
   /** Model id for the chosen provider (e.g. "gpt-4o-mini"). */
   generationModel?: string;
+  /** Name of a saved AppProfile to tailor generation. */
+  profileId?: string;
+  /** "single" (default) or "multi" — multi emits [Turn N] transcripts (security only). */
+  turnMode?: "single" | "multi";
+  /** Max turns for multi-turn generation (2..8). */
+  maxTurns?: number;
 }
 
 export interface GenerationProvider {
@@ -97,6 +103,9 @@ export interface GenerateDatasetResponse {
   seeds?: { roles: number; surfaces: number };
   /** Present when a profileId / inline profile tailored generation. */
   profile?: { name: string; tools: number; rules: number };
+  /** Present when multi-turn generation was used. */
+  turnMode?: "multi";
+  maxTurns?: number;
 }
 
 export function listDatasets() {
