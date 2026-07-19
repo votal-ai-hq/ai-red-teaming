@@ -185,11 +185,27 @@ npm run gen:dataset -- --preset configs/datasets/nemo-agent-quality.preset.json 
   --out data/datasets/quality-agent/v1.json --count 300
 ```
 
-**Scoping note:** this ships the *generation* of quality datasets. Quality rows
-are **not** run through the security engine — the Launch Scan dataset picker
-hides them — because grading correctness needs a different scorer. Wiring that
-scorer (a native correctness-judge mode, or the NeMo Evaluator adapter for
-tool-call / RAG / similarity metrics) is the next phase.
+### Running a quality dataset (native correctness scorer)
+
+Quality datasets run on the **native correctness scorer** — not the security
+engine. It sends each `input` to the target, extracts the response + tool calls,
+and grades against the `reference`/`expectedTools`:
+
+- **Deterministic metrics** (no LLM): `exact_match`, `f1`, `rouge`,
+  `tool_call_accuracy`.
+- **LLM-judge metrics** (reuses your judge model): `goal_accuracy`,
+  `faithfulness`, `answer_relevancy`, `topic_adherence`, `context_recall`.
+
+```bash
+npm run eval:quality -- config.mytarget.json \
+  --dataset data/datasets/quality-agent/v1.json \
+  --threshold 0.7 --concurrency 4
+```
+
+It prints a live score, a per-metric / per-task breakdown, and writes a
+`report/quality-report-*.json`. The dataset defaults to the config's
+`customAttacksFile` if `--dataset` is omitted. Quality rows are kept out of the
+security scan picker so the two axes never cross wires.
 
 ## Row schema
 

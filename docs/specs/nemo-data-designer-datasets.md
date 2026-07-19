@@ -7,7 +7,7 @@
 The platform evaluates on two axes and the dataset layer serves both:
 
 - **security** (default `kind`) — adversarial rows (`category`/`prompt`/`successCriteria`), graded on *compromise* by the native red-team engine. Fully wired end-to-end.
-- **quality** (`kind: "quality"`) — legitimate-task rows (`task`/`input`/`reference`/`expectedTools`/`metric`), graded on *correctness*. Own taxonomy (`lib/dataset/quality-set.ts`), own validator, own config builder. **Generation only** in this phase; quality rows are deliberately excluded from the security scan picker until a quality scorer exists.
+- **quality** (`kind: "quality"`) — legitimate-task rows (`task`/`input`/`reference`/`expectedTools`/`metric`), graded on *correctness*. Own taxonomy (`lib/dataset/quality-set.ts`), validator, config builder, and now a **native correctness scorer** (`lib/quality/`): deterministic metrics (exact_match/f1/rouge/tool_call_accuracy) + LLM-judge metrics (goal_accuracy/faithfulness/answer_relevancy/topic_adherence/context_recall), run via `npm run eval:quality`. Quality rows stay out of the security scan picker.
 
 This keeps one dataset surface serving both "is it safe?" and "is it good?", with the grading direction and scorer differing by kind.
 **Branch:** `claude/eval-datasets-agents-mcp-xg64j9`

@@ -1458,7 +1458,7 @@ function mergeVerdicts(
   return llmVerdict;
 }
 
-function extractPath(obj: unknown, path: string): unknown {
+export function extractPath(obj: unknown, path: string): unknown {
   if (!obj || typeof obj !== "object" || !path) return undefined;
   const parts = path.split(".");
   let current: unknown = obj;
