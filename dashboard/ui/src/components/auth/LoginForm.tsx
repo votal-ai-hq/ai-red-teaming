@@ -50,7 +50,7 @@ export function LoginForm() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-foreground tracking-tight">
-              Red Team Dashboard
+              Red-Team AI
             </h1>
             <p className="text-sm text-muted-foreground">
               Sign in with your credentials
