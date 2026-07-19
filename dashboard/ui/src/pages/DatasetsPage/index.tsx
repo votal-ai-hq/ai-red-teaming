@@ -3,8 +3,10 @@ import {
   listDatasets,
   generateDataset,
   listEvalRuns,
+  listGenerationProviders,
   type DatasetSummary,
   type EvalTrend,
+  type GenerationProvider,
 } from "@/api/datasets";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +34,26 @@ const PRESETS: Record<string, string> = {
   "quality-mcp": "configs/datasets/nemo-mcp-quality.preset.json",
   "quality-agent": "configs/datasets/nemo-agent-quality.preset.json",
 };
+
+/** Used until /api/datasets/providers answers (or if it's unavailable). */
+const FALLBACK_PROVIDERS: GenerationProvider[] = [
+  {
+    id: "nim",
+    label: "NVIDIA NIM",
+    defaultModel: "meta/llama-3.3-70b-instruct",
+    suggestedModels: ["meta/llama-3.3-70b-instruct"],
+    apiKeyEnv: "NVIDIA_API_KEY",
+    keyConfigured: true,
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    defaultModel: "gpt-4o-mini",
+    suggestedModels: ["gpt-4o-mini", "gpt-4o"],
+    apiKeyEnv: "OPENAI_API_KEY",
+    keyConfigured: true,
+  },
+];
 
 function topCategories(hist: Record<string, number>, n = 4): string[] {
   return Object.entries(hist)
@@ -117,6 +139,11 @@ export function DatasetsPage() {
   const [loading, setLoading] = useState(true);
   const [kind, setKind] = useState<"security" | "quality">("security");
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
+  const [providers, setProviders] = useState<GenerationProvider[]>(
+    FALLBACK_PROVIDERS,
+  );
+  const [providerId, setProviderId] = useState("nim");
+  const [model, setModel] = useState(FALLBACK_PROVIDERS[0].defaultModel);
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
   const [seedConfigPath, setSeedConfigPath] = useState("");
@@ -142,7 +169,25 @@ export function DatasetsPage() {
 
   useEffect(() => {
     refresh();
+    listGenerationProviders()
+      .then((r) => {
+        if (r.providers.length > 0) {
+          setProviders(r.providers);
+          setModel(
+            (m) => r.providers.find((p) => p.id === "nim")?.defaultModel ?? m,
+          );
+        }
+      })
+      .catch(() => {}); // older server without the endpoint — keep fallback
   }, []);
+
+  const provider =
+    providers.find((p) => p.id === providerId) ?? providers[0];
+
+  const selectProvider = (p: GenerationProvider) => {
+    setProviderId(p.id);
+    setModel(p.defaultModel);
+  };
 
   const onGenerate = async () => {
     setGenerating(true);
@@ -154,6 +199,8 @@ export function DatasetsPage() {
         preset: PRESETS[`${kind}-${family}`],
         out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
         count,
+        provider: providerId,
+        ...(model.trim() ? { generationModel: model.trim() } : {}),
         ...(seedConfigPath.trim()
           ? { seedConfigPath: seedConfigPath.trim() }
           : {}),
@@ -235,6 +282,40 @@ export function DatasetsPage() {
               </div>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Provider</Label>
+              <div className="flex gap-1">
+                {providers.map((p) => (
+                  <Button
+                    key={p.id}
+                    size="sm"
+                    variant={providerId === p.id ? "default" : "outline"}
+                    onClick={() => selectProvider(p)}
+                    title={`Generate with ${p.label} (needs ${p.apiKeyEnv})`}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="model">
+                Model
+              </Label>
+              <Input
+                id="model"
+                className="w-64 font-mono text-xs"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={provider.defaultModel}
+                list="model-suggestions"
+              />
+              <datalist id="model-suggestions">
+                {provider.suggestedModels.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs" htmlFor="count">
                 Rows
               </Label>
@@ -268,6 +349,18 @@ export function DatasetsPage() {
               Generate
             </Button>
           </div>
+          {provider.keyConfigured ? (
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <code>{provider.apiKeyEnv}</code> is configured on the server.
+            </p>
+          ) : (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              <code>{provider.apiKeyEnv}</code> is not set on the server —
+              generation with {provider.label} will fail until it is.
+            </p>
+          )}
           <div className="space-y-1">
             <Label className="text-xs" htmlFor="seedConfig">
               Seed from target analysis (optional)
@@ -290,10 +383,10 @@ export function DatasetsPage() {
             Writes to{" "}
             <code>data/datasets/{kind === "quality" ? "quality" : "nemo"}-{family}/{outName || "v1"}.json</code>.
             {kind === "quality" ? " Quality datasets grade correctness against a reference and run on the quality scorer (not the security engine)." : " Security datasets are adversarial and run through the red-team engine."}
-            Requires the NeMo Data Designer service to be reachable
-            (<code>NEMO_DATA_DESIGNER_URL</code>) and a provider API key
-            (<code>NVIDIA_API_KEY</code> for NIM or <code>OPENAI_API_KEY</code>{" "}
-            for OpenAI).
+            {" "}Rows are generated by <strong>{provider.label}</strong> (
+            <code>{model || provider.defaultModel}</code>) via the NeMo Data
+            Designer service, which must be reachable (
+            <code>NEMO_DATA_DESIGNER_URL</code>).
           </p>
 
           {error && (

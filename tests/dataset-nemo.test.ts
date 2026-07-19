@@ -19,6 +19,7 @@ import {
   extractRecords,
   NemoDataDesignerClient,
 } from "../lib/dataset/nemo-client.js";
+import { applyGenerationOverrides } from "../lib/dataset/provider-options.js";
 import { loadCustomAttacksFromConfig } from "../lib/custom-attacks-loader.js";
 import { listDatasets } from "../lib/dataset/list.js";
 import type { Config } from "../lib/types.js";
@@ -151,6 +152,47 @@ describe("recordToRow", () => {
     expect(String(row.description)).toMatch(/family=mcp/);
     // The mapped row passes strict validation.
     expect(validateRows([row]).valid).toHaveLength(1);
+  });
+});
+
+describe("applyGenerationOverrides", () => {
+  const base = () => ({ family: "mcp", provider: "nim" }) as never;
+
+  it("accepts a known provider and applies its default model", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(applyGenerationOverrides(preset as never, { provider: "openai" })).toBeNull();
+    expect(preset.provider).toBe("openai");
+    expect(preset.generationModel).toBe("gpt-4o-mini");
+  });
+
+  it("an explicit model wins over the provider default", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(
+      applyGenerationOverrides(preset as never, {
+        provider: "openai",
+        generationModel: "gpt-4o",
+      }),
+    ).toBeNull();
+    expect(preset.generationModel).toBe("gpt-4o");
+  });
+
+  it("rejects unknown providers and malformed model ids (fail-closed)", () => {
+    expect(
+      applyGenerationOverrides(base(), { provider: "closedai" }),
+    ).toMatch(/unknown provider/);
+    expect(
+      applyGenerationOverrides(base(), { generationModel: "bad model !!" }),
+    ).toMatch(/invalid generationModel/);
+    expect(
+      applyGenerationOverrides(base(), { generationModel: 42 }),
+    ).toMatch(/must be a string/);
+  });
+
+  it("leaves the preset untouched when no overrides are given", () => {
+    const preset = base() as { provider?: string; generationModel?: string };
+    expect(applyGenerationOverrides(preset as never, {})).toBeNull();
+    expect(preset.provider).toBe("nim");
+    expect(preset.generationModel).toBeUndefined();
   });
 });
 

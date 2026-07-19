@@ -34,6 +34,10 @@ import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
+import {
+  DATASET_PROVIDERS,
+  applyGenerationOverrides,
+} from "../lib/dataset/provider-options.js";
 import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
 import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
@@ -1623,6 +1627,25 @@ const server = createServer(
     // Body: { preset: string, count?: number, out: string, seedFromAnalysisConfig?: object }
     // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider
     // API key (NVIDIA_API_KEY for NIM, or OPENAI_API_KEY for OpenAI).
+    // API: generation providers + whether their API key is configured, so the
+    // UI can offer an informed provider/model choice (single source of truth
+    // is lib/dataset/provider-options.ts).
+    if (url.pathname === "/api/datasets/providers" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          providers: DATASET_PROVIDERS.map((p) => ({
+            ...p,
+            // NEMO_API_KEY is a provider-agnostic override accepted by the client.
+            keyConfigured: Boolean(
+              process.env[p.apiKeyEnv] || process.env.NEMO_API_KEY,
+            ),
+          })),
+        }),
+      );
+      return;
+    }
+
     if (url.pathname === "/api/datasets/generate" && req.method === "POST") {
       const clientIp =
         req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
@@ -1644,6 +1667,8 @@ const server = createServer(
           count?: number;
           out?: string;
           seedConfigPath?: string;
+          provider?: string;
+          generationModel?: string;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1677,6 +1702,15 @@ const server = createServer(
           readFileSync(presetAbs, "utf-8"),
         ) as DatasetPreset;
         if (body.count) preset.count = body.count;
+        const overrideError = applyGenerationOverrides(preset, {
+          provider: body.provider,
+          generationModel: body.generationModel,
+        });
+        if (overrideError) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: overrideError }));
+          return;
+        }
         if (preset.family !== "mcp" && preset.family !== "agent") {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: `bad preset.family "${preset.family}"` }));

@@ -16,6 +16,26 @@ export interface GenerateDatasetRequest {
   count?: number;
   /** Optional: config (under configs/) whose codebase analysis seeds generation. */
   seedConfigPath?: string;
+  /** LLM provider backing generation (e.g. "nim", "openai"). */
+  provider?: string;
+  /** Model id for the chosen provider (e.g. "gpt-4o-mini"). */
+  generationModel?: string;
+}
+
+export interface GenerationProvider {
+  id: string;
+  label: string;
+  defaultModel: string;
+  suggestedModels: string[];
+  apiKeyEnv: string;
+  /** Whether the server has this provider's API key (or NEMO_API_KEY) set. */
+  keyConfigured: boolean;
+}
+
+export function listGenerationProviders() {
+  return apiFetch<{ providers: GenerationProvider[] }>(
+    "/api/datasets/providers",
+  );
 }
 
 export interface GenerateDatasetResponse {
