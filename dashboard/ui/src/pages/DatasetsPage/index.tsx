@@ -155,6 +155,9 @@ export function DatasetsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [turnMode, setTurnMode] = useState<"single" | "multi">("single");
   const [maxTurns, setMaxTurns] = useState(3);
+  const [backend, setBackend] = useState<"data-designer" | "openai">(
+    "data-designer",
+  );
   const [seedConfigPath, setSeedConfigPath] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -194,10 +197,22 @@ export function DatasetsPage() {
 
   const provider =
     providers.find((p) => p.id === providerId) ?? providers[0];
+  const openaiProvider =
+    providers.find((p) => p.id === "openai") ?? provider;
+  // Direct-OpenAI always uses OpenAI, regardless of the DD provider chips.
+  const effProvider = backend === "openai" ? openaiProvider : provider;
 
   const selectProvider = (p: GenerationProvider) => {
     setProviderId(p.id);
     setModel(p.defaultModel);
+  };
+
+  const selectBackend = (b: "data-designer" | "openai") => {
+    setBackend(b);
+    // Moving to direct-OpenAI: swap a NIM model id for an OpenAI default.
+    if (b === "openai" && (!model.trim() || model.includes("/"))) {
+      setModel(openaiProvider.defaultModel);
+    }
   };
 
   const onGenerate = async () => {
@@ -210,7 +225,8 @@ export function DatasetsPage() {
         preset: PRESETS[`${kind}-${family}`],
         out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
         count,
-        provider: providerId,
+        backend,
+        provider: backend === "openai" ? "openai" : providerId,
         ...(model.trim() ? { generationModel: model.trim() } : {}),
         ...(profileId ? { profileId } : {}),
         ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
@@ -309,6 +325,27 @@ export function DatasetsPage() {
               </div>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Engine</Label>
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={backend === "openai" ? "default" : "outline"}
+                  onClick={() => selectBackend("openai")}
+                  title="Call OpenAI directly — no Data Designer service needed"
+                >
+                  OpenAI direct
+                </Button>
+                <Button
+                  size="sm"
+                  variant={backend === "data-designer" ? "default" : "outline"}
+                  onClick={() => selectBackend("data-designer")}
+                  title="Generate via the NeMo Data Designer microservice"
+                >
+                  Data Designer
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Conversation</Label>
               <div className="flex items-center gap-1">
                 {(["single", "multi"] as const).map((m) => (
@@ -345,22 +382,24 @@ export function DatasetsPage() {
                 )}
               </div>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Provider</Label>
-              <div className="flex gap-1">
-                {providers.map((p) => (
-                  <Button
-                    key={p.id}
-                    size="sm"
-                    variant={providerId === p.id ? "default" : "outline"}
-                    onClick={() => selectProvider(p)}
-                    title={`Generate with ${p.label} (needs ${p.apiKeyEnv})`}
-                  >
-                    {p.label}
-                  </Button>
-                ))}
+            {backend === "data-designer" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Provider</Label>
+                <div className="flex gap-1">
+                  {providers.map((p) => (
+                    <Button
+                      key={p.id}
+                      size="sm"
+                      variant={providerId === p.id ? "default" : "outline"}
+                      onClick={() => selectProvider(p)}
+                      title={`Generate with ${p.label} (needs ${p.apiKeyEnv})`}
+                    >
+                      {p.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="model">
                 Model
@@ -370,11 +409,11 @@ export function DatasetsPage() {
                 className="w-64 font-mono text-xs"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={provider.defaultModel}
+                placeholder={effProvider.defaultModel}
                 list="model-suggestions"
               />
               <datalist id="model-suggestions">
-                {provider.suggestedModels.map((m) => (
+                {effProvider.suggestedModels.map((m) => (
                   <option key={m} value={m} />
                 ))}
               </datalist>
@@ -413,16 +452,17 @@ export function DatasetsPage() {
               Generate
             </Button>
           </div>
-          {provider.keyConfigured ? (
+          {effProvider.keyConfigured ? (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <code>{provider.apiKeyEnv}</code> is configured on the server.
+              <code>{effProvider.apiKeyEnv}</code> is configured on the server.
+              {backend === "openai" && " No Data Designer service needed."}
             </p>
           ) : (
             <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              <code>{provider.apiKeyEnv}</code> is not set on the server —
-              generation with {provider.label} will fail until it is.
+              <code>{effProvider.apiKeyEnv}</code> is not set on the server —
+              generation with {effProvider.label} will fail until it is.
             </p>
           )}
           <div className="space-y-1 rounded-lg border border-dashed border-border p-3">
@@ -492,10 +532,16 @@ export function DatasetsPage() {
             Writes to{" "}
             <code>data/datasets/{kind === "quality" ? "quality" : "nemo"}-{family}/{outName || "v1"}.json</code>.
             {kind === "quality" ? " Quality datasets grade correctness against a reference and run on the quality scorer (not the security engine)." : " Security datasets are adversarial and run through the red-team engine."}
-            {" "}Rows are generated by <strong>{provider.label}</strong> (
-            <code>{model || provider.defaultModel}</code>) via the NeMo Data
-            Designer service, which must be reachable (
-            <code>NEMO_DATA_DESIGNER_URL</code>).
+            {" "}Rows are generated by <strong>{effProvider.label}</strong> (
+            <code>{model || effProvider.defaultModel}</code>){" "}
+            {backend === "openai" ? (
+              <>directly via the OpenAI API — no Data Designer service required.</>
+            ) : (
+              <>
+                via the NeMo Data Designer service, which must be reachable (
+                <code>NEMO_DATA_DESIGNER_URL</code>).
+              </>
+            )}
           </p>
 
           {error && (
