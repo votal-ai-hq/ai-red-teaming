@@ -1,0 +1,29 @@
+# Rendered by fly/deploy.sh — do not edit the generated fly.toml by hand;
+# edit this template. __KEY__ placeholders are filled from .env.
+#
+# Fly runs the compose services as containers in a single Machine
+# (https://fly.io/docs/machines/guides-examples/multi-container-machines/).
+# The compose file (compose.fly.yaml) is auto-detected in this directory.
+
+app = "__FLY_APP__"
+primary_region = "__FLY_REGION__"
+
+# Expose the Data Designer API. Keep this private (see fly/README.md) unless you
+# put auth in front of it — do NOT leave Data Designer open to the internet.
+[http_service]
+  internal_port = __FLY_PORT__
+  force_https = true
+  auto_stop_machines = "off"   # stateful stack; don't scale to zero
+  min_machines_running = 1
+
+[[vm]]
+  memory = "__FLY_MEMORY__"
+  cpu_kind = "shared"
+  cpus = 4
+
+# Persistent storage — Fly ignores compose `volumes:`, so state (Postgres /
+# Data Store) must live on a Fly Volume mounted here. Map the stateful services'
+# data dirs onto /data in compose.fly.yaml.
+[mounts]
+  source = "nemo_data"
+  destination = "/data"
