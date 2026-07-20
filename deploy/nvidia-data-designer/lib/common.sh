@@ -113,12 +113,13 @@ ndd_render_template() {
 }
 
 # `docker login` to NVIDIA's registry using an NGC key (username is literal).
+# Dry-run only prints intent; a real run requires the key.
 ndd_nvcr_login() {
-  ndd_require_env NGC_CLI_API_KEY
   ndd_require_cmd docker
   if [ "${DRY_RUN:-1}" = "1" ]; then
     printf '  \033[2m[dry-run]\033[0m docker login nvcr.io (user: $oauthtoken)\n'
-  else
-    printf '%s' "$NGC_CLI_API_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
+    return 0
   fi
+  ndd_require_env NGC_CLI_API_KEY
+  printf '%s' "$NGC_CLI_API_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
 }

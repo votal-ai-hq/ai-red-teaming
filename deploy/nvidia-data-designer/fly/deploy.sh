@@ -24,21 +24,43 @@ ROOT="$(cd "$HERE/.." && pwd)"
 ndd_load_env "$ROOT/.env"
 
 # --- config + preflight ------------------------------------------------------
+# Fly knobs have sensible defaults so the script runs even without a .env;
+# override any of them in .env.
+: "${FLY_APP:=nemo-data-designer}"
+: "${FLY_REGION:=iad}"
+: "${FLY_MEMORY:=16gb}"
+: "${FLY_PORT:=8080}"
+: "${FLY_VOLUME_SIZE:=25}"
+: "${COMPOSE_FILE:=./nemo-data-designer-docker-compose/docker-compose.yaml}"
+
 ndd_require_cmd flyctl
 ndd_require_cmd docker
-for v in FLY_APP FLY_REGION FLY_MEMORY FLY_PORT FLY_VOLUME_SIZE \
-         NGC_CLI_API_KEY COMPOSE_FILE; do
-  ndd_require_env "$v"
-done
-if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${NIM_API_KEY:-}" ]; then
-  ndd_die "set OPENAI_API_KEY (recommended) or NIM_API_KEY in .env — Data Designer needs a model backend"
+
+REAL_RUN=0; [ "${DRY_RUN:-1}" = "1" ] || REAL_RUN=1
+
+# Credentials + a model backend are mandatory only for a real deploy, so a
+# dry-run can preview the whole plan with nothing configured.
+if [ "$REAL_RUN" = "1" ]; then
+  ndd_require_env NGC_CLI_API_KEY
+  if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${NIM_API_KEY:-}" ]; then
+    ndd_die "set OPENAI_API_KEY (recommended) or NIM_API_KEY in .env — Data Designer needs a model backend"
+  fi
 fi
 
-COMPOSE_FILE="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)/$(basename "$COMPOSE_FILE")"
-[ -f "$COMPOSE_FILE" ] || ndd_die "COMPOSE_FILE not found: $COMPOSE_FILE
+# Resolve the compose file if present. Required for a real run; a dry-run
+# without it still shows the rest of the plan (image steps are skipped).
+COMPOSE_OK=0
+if [ -f "$COMPOSE_FILE" ]; then
+  COMPOSE_FILE="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)/$(basename "$COMPOSE_FILE")"
+  COMPOSE_OK=1
+elif [ "$REAL_RUN" = "1" ]; then
+  ndd_die "COMPOSE_FILE not found: $COMPOSE_FILE
   Download it first:
     ngc registry resource download-version \\
       \"nvidia/nemo-microservices/nemo-data-designer-docker-compose:${NEMO_MICROSERVICES_IMAGE_TAG:-25.12}\""
+else
+  ndd_warn "COMPOSE_FILE not found ($COMPOSE_FILE) — image mirror/rewrite skipped in this dry-run"
+fi
 
 TARGET_REGISTRY="registry.fly.io/${FLY_APP}"
 FLY_COMPOSE="$HERE/compose.fly.yaml"
@@ -55,23 +77,42 @@ step_login() {
   ndd_run flyctl auth docker
 }
 
+# Does the Fly app already exist? (read-only; safe in dry-run). Returns 0 if so.
+ndd_fly_app_exists() {
+  flyctl apps list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$FLY_APP"
+}
+
 step_app() {
-  ndd_log "2/7  Create Fly app + volume (idempotent)"
-  ndd_run flyctl apps create "$FLY_APP" || true
+  ndd_log "2/7  Create Fly app + volume (create only if missing)"
+  if ndd_fly_app_exists; then
+    ndd_log "app '$FLY_APP' already exists — skipping create"
+  else
+    ndd_log "app '$FLY_APP' not found — creating"
+    ndd_run flyctl apps create "$FLY_APP"
+  fi
+  # Volume create is a no-op error if one already exists; tolerate it.
   ndd_run flyctl volumes create nemo_data \
     --app "$FLY_APP" --region "$FLY_REGION" --size "$FLY_VOLUME_SIZE" --yes || true
 }
 
 step_mirror() {
   ndd_log "3/7  Mirror private nvcr.io images -> $TARGET_REGISTRY"
-  ndd_mirror_images "$COMPOSE_FILE" "$TARGET_REGISTRY"
+  if [ "$COMPOSE_OK" = "1" ]; then
+    ndd_mirror_images "$COMPOSE_FILE" "$TARGET_REGISTRY"
+  else
+    ndd_warn "skipped — no compose file (set COMPOSE_FILE in .env)"
+  fi
 }
 
 step_compose() {
   ndd_log "4/7  Rewrite compose to use mirrored images"
-  ndd_rewrite_compose "$COMPOSE_FILE" "$FLY_COMPOSE" "$TARGET_REGISTRY"
-  ndd_warn "Review $FLY_COMPOSE: map stateful services' data dirs onto /data (the Fly volume),"
-  ndd_warn "and confirm the Data Designer model provider is set to OpenAI (api_key=OPENAI_API_KEY)."
+  if [ "$COMPOSE_OK" = "1" ]; then
+    ndd_rewrite_compose "$COMPOSE_FILE" "$FLY_COMPOSE" "$TARGET_REGISTRY"
+    ndd_warn "Review $FLY_COMPOSE: map stateful services' data dirs onto /data (the Fly volume),"
+    ndd_warn "and confirm the Data Designer model provider is set to OpenAI (api_key=OPENAI_API_KEY)."
+  else
+    ndd_warn "skipped — no compose file (set COMPOSE_FILE in .env)"
+  fi
 }
 
 step_render() {
@@ -83,9 +124,13 @@ step_render() {
 step_secrets() {
   ndd_log "6/7  Set secrets"
   local kv=()
-  [ -n "${OPENAI_API_KEY:-}" ] && kv+=("OPENAI_API_KEY=$OPENAI_API_KEY")
-  [ -n "${NIM_API_KEY:-}" ]    && kv+=("NIM_API_KEY=$NIM_API_KEY")
-  kv+=("NGC_CLI_API_KEY=$NGC_CLI_API_KEY")
+  [ -n "${OPENAI_API_KEY:-}" ]  && kv+=("OPENAI_API_KEY=$OPENAI_API_KEY")
+  [ -n "${NIM_API_KEY:-}" ]     && kv+=("NIM_API_KEY=$NIM_API_KEY")
+  [ -n "${NGC_CLI_API_KEY:-}" ] && kv+=("NGC_CLI_API_KEY=$NGC_CLI_API_KEY")
+  if [ "${#kv[@]}" -eq 0 ]; then
+    ndd_warn "no secrets set — add OPENAI_API_KEY / NGC_CLI_API_KEY to .env for a real deploy"
+    return 0
+  fi
   ndd_run flyctl secrets set --app "$FLY_APP" --stage "${kv[@]}"
 }
 
