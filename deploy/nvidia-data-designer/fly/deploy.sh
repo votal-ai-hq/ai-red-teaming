@@ -123,15 +123,24 @@ step_render() {
 
 step_secrets() {
   ndd_log "6/7  Set secrets"
-  local kv=()
-  [ -n "${OPENAI_API_KEY:-}" ]  && kv+=("OPENAI_API_KEY=$OPENAI_API_KEY")
-  [ -n "${NIM_API_KEY:-}" ]     && kv+=("NIM_API_KEY=$NIM_API_KEY")
-  [ -n "${NGC_CLI_API_KEY:-}" ] && kv+=("NGC_CLI_API_KEY=$NGC_CLI_API_KEY")
+  # Build the real key=value pairs, and a redacted names-only list for display —
+  # NEVER print secret values (dry-run output can end up in logs/terminals).
+  local kv=() names=()
+  [ -n "${OPENAI_API_KEY:-}" ]  && { kv+=("OPENAI_API_KEY=$OPENAI_API_KEY");   names+=("OPENAI_API_KEY"); }
+  [ -n "${NIM_API_KEY:-}" ]     && { kv+=("NIM_API_KEY=$NIM_API_KEY");         names+=("NIM_API_KEY"); }
+  [ -n "${NGC_CLI_API_KEY:-}" ] && { kv+=("NGC_CLI_API_KEY=$NGC_CLI_API_KEY"); names+=("NGC_CLI_API_KEY"); }
   if [ "${#kv[@]}" -eq 0 ]; then
     ndd_warn "no secrets set — add OPENAI_API_KEY / NGC_CLI_API_KEY to .env for a real deploy"
     return 0
   fi
-  ndd_run flyctl secrets set --app "$FLY_APP" --stage "${kv[@]}"
+  local redacted=(); local n; for n in "${names[@]}"; do redacted+=("${n}=****"); done
+  if [ "${DRY_RUN:-1}" = "1" ]; then
+    printf '  \033[2m[dry-run]\033[0m flyctl secrets set --app %s --stage %s\n' \
+      "$FLY_APP" "${redacted[*]}"
+  else
+    ndd_log "run: flyctl secrets set --app $FLY_APP --stage ${redacted[*]}"
+    flyctl secrets set --app "$FLY_APP" --stage "${kv[@]}"
+  fi
 }
 
 step_deploy() {
