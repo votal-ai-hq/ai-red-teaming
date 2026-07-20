@@ -26,6 +26,8 @@ export interface GenerateDatasetRequest {
   turnMode?: "single" | "multi";
   /** Max turns for multi-turn generation (2..8). */
   maxTurns?: number;
+  /** Generation engine: "data-designer" (default) or "openai" (direct, no service). */
+  backend?: "data-designer" | "openai";
 }
 
 export interface GenerationProvider {
@@ -118,6 +120,8 @@ export interface GenerateDatasetResponse {
   /** Present when multi-turn generation was used. */
   turnMode?: "multi";
   maxTurns?: number;
+  /** Which engine produced the rows. */
+  backend?: "data-designer" | "openai";
 }
 
 export function listDatasets() {

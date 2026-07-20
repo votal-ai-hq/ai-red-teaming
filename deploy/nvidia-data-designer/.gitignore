@@ -1,3 +1,5 @@
 .env
 fly/compose.fly.yaml
 fly/fly.toml
+dd-compose.yaml
+nemo-data-designer-docker-compose*/

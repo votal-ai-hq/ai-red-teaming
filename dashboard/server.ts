@@ -34,6 +34,7 @@ import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
+import { generateWithOpenAI } from "../lib/dataset/openai-generator.js";
 import {
   DATASET_PROVIDERS,
   applyGenerationOverrides,
@@ -1762,6 +1763,8 @@ const server = createServer(
           turnMode?: "single" | "multi";
           /** Max turns for multi-turn generation (clamped to 2..8). */
           maxTurns?: number;
+          /** "data-designer" (default) or "openai" (call OpenAI directly). */
+          backend?: "data-designer" | "openai";
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1809,6 +1812,15 @@ const server = createServer(
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: overrideError }));
           return;
+        }
+        // Direct-OpenAI generation must use an OpenAI model — a NIM model id
+        // (e.g. "meta/llama-…") won't resolve against OpenAI. Force provider and
+        // fall back to a sensible OpenAI default if the model isn't OpenAI-shaped.
+        if (body.backend === "openai") {
+          preset.provider = "openai";
+          if (!preset.generationModel || preset.generationModel.includes("/")) {
+            preset.generationModel = "gpt-4o-mini";
+          }
         }
         if (preset.family !== "mcp" && preset.family !== "agent") {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1878,8 +1890,18 @@ const server = createServer(
           kind === "quality"
             ? buildQualityDataDesignerConfig(preset, seeds)
             : buildDataDesignerConfig(preset, seeds);
-        const client = new NemoDataDesignerClient();
-        const records = await client.generate(ddConfig, preset.count);
+
+        // Generation backend: "openai" calls OpenAI directly (no Data Designer
+        // service); "data-designer" (default) posts to the NeMo microservice.
+        // Same config in, same records out — everything else is unchanged.
+        const backend = body.backend === "openai" ? "openai" : "data-designer";
+        let records;
+        if (backend === "openai") {
+          records = await generateWithOpenAI(ddConfig, preset.count ?? 300);
+        } else {
+          const client = new NemoDataDesignerClient();
+          records = await client.generate(ddConfig, preset.count);
+        }
         const { valid, errors, histogram, duplicatesDropped } =
           kind === "quality"
             ? validateQualityRows(recordsToQualityRows(records))
@@ -1909,6 +1931,7 @@ const server = createServer(
             duplicatesDropped,
             histogram,
             summary: formatHistogram(histogram),
+            backend,
             ...(seedInfo ? { seeds: seedInfo } : {}),
             ...(profileInfo ? { profile: profileInfo } : {}),
             ...(preset.turnMode === "multi"
