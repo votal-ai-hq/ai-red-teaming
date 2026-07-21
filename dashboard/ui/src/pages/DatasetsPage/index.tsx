@@ -35,6 +35,7 @@ import {
   Wand2,
   ChevronRight,
   ChevronDown,
+  ArrowRight,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -192,6 +193,7 @@ function RowItem({ row }: { row: DatasetRow }) {
 
 /** A dataset summary card that expands to show its rows on demand. */
 function DatasetCard({ d }: { d: DatasetSummary }) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<DatasetRow[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -242,14 +244,28 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
             )}
           </div>
         </div>
-        <Button size="sm" variant="outline" onClick={toggle} className="shrink-0">
-          {open ? (
-            <ChevronDown className="w-3.5 h-3.5" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5" />
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          {d.kind !== "quality" && (
+            <Button
+              size="sm"
+              onClick={() =>
+                navigate(`/new-scan?dataset=${encodeURIComponent(d.path)}`)
+              }
+              title="Launch a scan using this dataset as the attack set"
+            >
+              Use for evaluation
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Button>
           )}
-          View rows
-        </Button>
+          <Button size="sm" variant="outline" onClick={toggle}>
+            {open ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5" />
+            )}
+            View rows
+          </Button>
+        </div>
       </div>
       {open && (
         <div className="border-t border-border p-3 space-y-2 max-h-96 overflow-y-auto">

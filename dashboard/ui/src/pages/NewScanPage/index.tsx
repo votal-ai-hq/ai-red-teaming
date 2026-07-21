@@ -292,7 +292,11 @@ export default function NewScanPage() {
   const [policyUploadError, setPolicyUploadError] = useState<string | null>(null);
 
   // ── Evaluation dataset (customAttacksFile) ──
-  const [datasetFile, setDatasetFile] = useState("");
+  // Deep link from the Datasets tab ("Use for evaluation"): ?dataset=<path>
+  // preselects the dataset and opens the section.
+  const deepLinkDataset =
+    new URLSearchParams(location.search).get("dataset") || "";
+  const [datasetFile, setDatasetFile] = useState(deepLinkDataset);
   const [datasetOnly, setDatasetOnly] = useState(false);
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([]);
 
@@ -1734,7 +1738,11 @@ export default function NewScanPage() {
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Evaluation Dataset" icon={FileText}>
+          <CollapsibleSection
+            title="Evaluation Dataset"
+            icon={FileText}
+            defaultOpen={!!deepLinkDataset}
+          >
             <div className="space-y-4">
               <FieldRow
                 label="Attack dataset"
