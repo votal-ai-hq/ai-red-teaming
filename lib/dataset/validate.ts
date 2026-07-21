@@ -116,11 +116,21 @@ export interface QualityValidationResult {
  * `input` non-empty, and at least one of `reference` / `expectedTools` present
  * (a row with no grading reference can't be scored).
  */
-export function validateQualityRows(rows: unknown[]): QualityValidationResult {
+/**
+ * @param opts.allowedTasks extra task labels accepted beyond the known pool —
+ *   user-defined custom focus tasks (quality datasets only). A row's `task` is
+ *   valid if it's a known QualityTask OR listed here. `metric` stays strict
+ *   because the scorer grades on it.
+ */
+export function validateQualityRows(
+  rows: unknown[],
+  opts?: { allowedTasks?: Iterable<string> },
+): QualityValidationResult {
   const valid: QualityRow[] = [];
   const errors: string[] = [];
   const histogram: Record<string, number> = {};
   const seen = new Set<string>();
+  const allowedTasks = new Set(opts?.allowedTasks ?? []);
   let duplicatesDropped = 0;
 
   rows.forEach((raw, i) => {
@@ -138,7 +148,7 @@ export function validateQualityRows(rows: unknown[]): QualityValidationResult {
       ? (o.expectedTools as unknown[]).map((t) => String(t).trim()).filter(Boolean)
       : [];
 
-    if (!isQualityTask(task)) {
+    if (!isQualityTask(task) && !allowedTasks.has(task)) {
       errors.push(`row ${idx}: unknown quality task "${task}"`);
       return;
     }
@@ -189,11 +199,26 @@ export function mergeDatasets(
   kind: "security" | "quality",
   existing: unknown[],
   incoming: unknown[],
+  opts?: { allowedTasks?: Iterable<string> },
 ): (ValidationResult | QualityValidationResult) & { added: number } {
-  const existingCount = Array.isArray(existing) ? existing.length : 0;
-  const combined = [...(Array.isArray(existing) ? existing : []), ...incoming];
-  const res =
-    kind === "quality" ? validateQualityRows(combined) : validateRows(combined);
+  const existingArr = Array.isArray(existing) ? existing : [];
+  const existingCount = existingArr.length;
+  const combined = [...existingArr, ...incoming];
+  let res: ValidationResult | QualityValidationResult;
+  if (kind === "quality") {
+    // Existing rows were valid when saved — keep any custom task labels they
+    // already carry so a top-up never drops what's already on disk.
+    const allowed = new Set(opts?.allowedTasks ?? []);
+    for (const r of existingArr) {
+      if (r && typeof r === "object") {
+        const t = String((r as Record<string, unknown>).task ?? "").trim();
+        if (t) allowed.add(t);
+      }
+    }
+    res = validateQualityRows(combined, { allowedTasks: allowed });
+  } else {
+    res = validateRows(combined);
+  }
   return { ...res, added: res.valid.length - existingCount };
 }
 

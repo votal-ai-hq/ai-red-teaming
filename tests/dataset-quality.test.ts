@@ -6,6 +6,7 @@ import {
   defaultQualityPool,
   isQualityMetric,
   isQualityTask,
+  sanitizeCustomTask,
 } from "../lib/dataset/quality-set.js";
 import { validateQualityRows } from "../lib/dataset/validate.js";
 import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
@@ -22,6 +23,22 @@ describe("quality-set", () => {
   });
   it("resolveQualityPool rejects unknown tasks (fail-closed)", () => {
     expect(() => resolveQualityPool("mcp", ["not_a_task"])).toThrow(/unknown tasks/);
+  });
+  it("resolveQualityPool keeps custom tasks as sanitized slugs with allowCustom", () => {
+    const pool = resolveQualityPool(
+      "mcp",
+      ["tool_selection", "Refund Policy QA!", "  "],
+      { allowCustom: true },
+    );
+    expect(pool).toContain("tool_selection"); // known task preserved
+    expect(pool).toContain("refund_policy_qa"); // custom normalized
+    expect(pool).not.toContain(""); // blank dropped
+  });
+  it("sanitizeCustomTask normalizes to a safe slug (or null)", () => {
+    expect(sanitizeCustomTask("Refund Policy QA")).toBe("refund_policy_qa");
+    expect(sanitizeCustomTask("  billing/disputes  ")).toBe("billing_disputes");
+    expect(sanitizeCustomTask("!!!")).toBeNull();
+    expect(sanitizeCustomTask("")).toBeNull();
   });
   it("knows its metrics", () => {
     expect(isQualityMetric("tool_call_accuracy")).toBe(true);
@@ -46,6 +63,20 @@ describe("validateQualityRows (fail-closed)", () => {
   it("rejects unknown task / metric", () => {
     expect(validateQualityRows([{ ...good, task: "bogus" }]).errors[0]).toMatch(/unknown quality task/);
     expect(validateQualityRows([{ ...good, metric: "bogus" }]).errors[0]).toMatch(/unknown metric/);
+  });
+  it("accepts a custom task when allow-listed, but still rejects a bad metric", () => {
+    const row = { ...good, task: "refund_policy_qa" };
+    // Without the allow-list, the custom task is rejected (fail-closed default).
+    expect(validateQualityRows([row]).errors[0]).toMatch(/unknown quality task/);
+    // With it allow-listed, the row passes.
+    const ok = validateQualityRows([row], { allowedTasks: ["refund_policy_qa"] });
+    expect(ok.errors).toEqual([]);
+    expect(ok.valid[0].task).toBe("refund_policy_qa");
+    // metric stays strict even with a custom task allowed.
+    const badMetric = validateQualityRows([{ ...row, metric: "bogus" }], {
+      allowedTasks: ["refund_policy_qa"],
+    });
+    expect(badMetric.errors[0]).toMatch(/unknown metric/);
   });
   it("rejects a row with no reference and no expectedTools", () => {
     const r = validateQualityRows([{ task: "rag_answer", input: "q?", metric: "faithfulness" }]);

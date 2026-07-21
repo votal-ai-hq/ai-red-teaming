@@ -37,6 +37,7 @@ import { defaultCategoryPool } from "../lib/dataset/category-set.js";
 import {
   defaultQualityPool,
   QUALITY_METRICS,
+  resolveQualityPool,
 } from "../lib/dataset/quality-set.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { generateWithOpenAI } from "../lib/dataset/openai-generator.js";
@@ -1694,7 +1695,23 @@ const server = createServer(
         }
         const rows = Array.isArray(body.rows) ? body.rows : [];
         const kind = body.kind === "quality" ? "quality" : "security";
-        const gen = kind === "quality" ? validateQualityRows(rows) : validateRows(rows);
+        // Curated rows already passed generation validation; allow whatever
+        // (possibly custom) task labels they carry so a save/top-up preserves
+        // them. `metric` still validates strictly.
+        const allowedTasks =
+          kind === "quality"
+            ? rows
+                .map((r) =>
+                  r && typeof r === "object"
+                    ? String((r as Record<string, unknown>).task ?? "").trim()
+                    : "",
+                )
+                .filter(Boolean)
+            : [];
+        const gen =
+          kind === "quality"
+            ? validateQualityRows(rows, { allowedTasks })
+            : validateRows(rows);
         if (gen.errors.length > 0 || gen.valid.length === 0) {
           res.writeHead(422, {
             "Content-Type": "application/json",
@@ -1723,7 +1740,7 @@ const server = createServer(
           } catch {
             /* unreadable existing file — treat as fresh write */
           }
-          const merged = mergeDatasets(kind, existingRows, gen.valid);
+          const merged = mergeDatasets(kind, existingRows, gen.valid, { allowedTasks });
           added = merged.added;
           duplicatesDropped += gen.valid.length - merged.added;
           valid = merged.valid;
@@ -2204,9 +2221,21 @@ const server = createServer(
         }
 
         const kind = preset.kind ?? "security";
+        // Quality datasets may carry user-defined custom focus tasks (a quality
+        // row's `task` is a report label, not a routing key — grading is on
+        // `metric`). Resolve the pool with allowCustom so custom slugs pass, and
+        // remember them as the validation allow-list. Security categories stay
+        // fixed (the red-team engine routes on them), so no custom path there.
+        let allowedTasks: string[] = [];
+        if (kind === "quality" && Array.isArray(preset.tasks) && preset.tasks.length) {
+          preset.tasks = resolveQualityPool(preset.family, preset.tasks, {
+            allowCustom: true,
+          });
+          allowedTasks = preset.tasks;
+        }
         const ddConfig =
           kind === "quality"
-            ? buildQualityDataDesignerConfig(preset, seeds)
+            ? buildQualityDataDesignerConfig(preset, seeds, { allowCustomTasks: true })
             : buildDataDesignerConfig(preset, seeds);
 
         // Generation backend: a direct LLM engine (openai | anthropic |
@@ -2263,7 +2292,7 @@ const server = createServer(
         // Validate the freshly generated rows (the quality gate is on these).
         const gen =
           kind === "quality"
-            ? validateQualityRows(recordsToQualityRows(records))
+            ? validateQualityRows(recordsToQualityRows(records), { allowedTasks })
             : validateRows(recordsToRows(records, preset.family));
         const errors = gen.errors;
         let valid: unknown[] = gen.valid;
@@ -2300,7 +2329,7 @@ const server = createServer(
           } catch {
             /* unreadable existing file — treat as fresh write */
           }
-          const merged = mergeDatasets(kind, existingRows, valid);
+          const merged = mergeDatasets(kind, existingRows, valid, { allowedTasks });
           addedCount = merged.added;
           duplicatesDropped += valid.length - merged.added;
           valid = merged.valid;

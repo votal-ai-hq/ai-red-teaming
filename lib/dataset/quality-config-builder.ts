@@ -134,8 +134,11 @@ function referenceTemplate(context?: string): string {
 export function buildQualityDataDesignerConfig(
   preset: DatasetPreset,
   seeds?: DatasetSeeds,
+  opts?: { allowCustomTasks?: boolean },
 ): DataDesignerConfig {
-  const tasks = resolveQualityPool(preset.family, preset.tasks);
+  const tasks = resolveQualityPool(preset.family, preset.tasks, {
+    allowCustom: opts?.allowCustomTasks,
+  });
   const metrics = preset.metrics ?? defaultMetrics(preset.family);
   const roles = seeds?.roles ?? preset.roles ?? DEFAULT_ROLES;
   const surfaces = seeds?.surfaces ?? preset.surfaces ?? DEFAULT_SURFACES;
