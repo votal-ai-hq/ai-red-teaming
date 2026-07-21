@@ -29,15 +29,16 @@ function inferFamily(relPath: string): string {
   return "unknown";
 }
 
-function summarizeFile(root: string, absPath: string): DatasetSummary | null {
-  let rows: unknown;
-  try {
-    rows = JSON.parse(readFileSync(absPath, "utf-8"));
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(rows)) return null;
-
+/**
+ * Compute a dataset summary from a logical path + its rows. Pure — used by both
+ * the filesystem lister and the DB-backed store so a dataset looks identical
+ * whichever backend holds it. `sizeBytes` defaults to the JSON byte length.
+ */
+export function summarizeRows(
+  relPath: string,
+  rows: unknown[],
+  sizeBytes?: number,
+): DatasetSummary {
   // Quality rows carry `task` + `input`; security rows carry `category` + `prompt`.
   const first = rows.find((r) => r && typeof r === "object") as
     | Record<string, unknown>
@@ -53,16 +54,27 @@ function summarizeFile(root: string, absPath: string): DatasetSummary | null {
       histogram[bucket] = (histogram[bucket] ?? 0) + 1;
     }
   }
-  const relPath = relative(root, absPath);
   return {
     path: relPath,
-    name: absPath.split("/").pop()!.replace(/\.json$/i, ""),
+    name: relPath.split("/").pop()!.replace(/\.json$/i, ""),
     family: inferFamily(relPath),
     kind,
     rowCount: rows.length,
     histogram,
-    sizeBytes: statSync(absPath).size,
+    sizeBytes:
+      sizeBytes ?? Buffer.byteLength(JSON.stringify(rows), "utf-8"),
   };
+}
+
+function summarizeFile(root: string, absPath: string): DatasetSummary | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(readFileSync(absPath, "utf-8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+  return summarizeRows(relative(root, absPath), rows, statSync(absPath).size);
 }
 
 /**
