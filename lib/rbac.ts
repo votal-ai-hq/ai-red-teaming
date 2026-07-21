@@ -106,6 +106,11 @@ const PERMISSIONS: RoutePermission[] = [
     roles: ["admin"],
   },
   {
+    method: "POST",
+    pattern: /^\/api\/datasets\/save$/,
+    roles: ["admin"],
+  },
+  {
     method: "GET",
     pattern: /^\/api\/datasets\/profiles$/,
     roles: ["admin", "viewer"],

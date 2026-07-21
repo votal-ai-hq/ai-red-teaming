@@ -36,6 +36,8 @@ export interface GenerateDatasetRequest {
   severities?: string[];
   tasks?: string[];
   metrics?: string[];
+  /** Preview/curate: generate + validate but don't write; return the rows. */
+  preview?: boolean;
 }
 
 export interface GenerationProvider {
@@ -173,6 +175,18 @@ export function getDatasetRows(path: string, limit = 200) {
   );
 }
 
+/** Save a curated subset of rows as a dataset (after preview/curate). */
+export function saveDatasetRows(body: {
+  out: string;
+  kind: "security" | "quality";
+  rows: DatasetRow[];
+}) {
+  return apiFetch<GenerateDatasetResponse>("/api/datasets/save", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function generateDataset(body: GenerateDatasetRequest) {
   return apiFetch<GenerateDatasetResponse>("/api/datasets/generate", {
     method: "POST",
@@ -192,7 +206,7 @@ export type GenerateStreamEvent =
       severity?: string;
       preview: string;
     }
-  | ({ type: "done" } & GenerateDatasetResponse)
+  | ({ type: "done"; preview?: boolean; rows?: DatasetRow[] } & GenerateDatasetResponse)
   | { type: "error"; error: string; detail?: string; sampleErrors?: string[] };
 
 /**

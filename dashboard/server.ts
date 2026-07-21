@@ -1657,6 +1657,66 @@ const server = createServer(
       return;
     }
 
+    // API: save a curated set of rows as a dataset (used after preview/curate —
+    // the user reviewed generated rows and kept a subset).
+    if (url.pathname === "/api/datasets/save" && req.method === "POST") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req)) as {
+          out?: string;
+          kind?: string;
+          rows?: unknown[];
+        };
+        const outAbs = resolvePath(repoRoot, body.out || "");
+        if (
+          !body.out ||
+          !outAbs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !outAbs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "out must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        const rows = Array.isArray(body.rows) ? body.rows : [];
+        const { valid, errors, histogram, duplicatesDropped } =
+          body.kind === "quality"
+            ? validateQualityRows(rows)
+            : validateRows(rows);
+        if (errors.length > 0 || valid.length === 0) {
+          res.writeHead(422, {
+            "Content-Type": "application/json",
+          });
+          res.end(
+            JSON.stringify({
+              error: "no valid rows to save",
+              invalid: errors.length,
+              kept: valid.length,
+              sampleErrors: errors.slice(0, 10),
+            }),
+          );
+          return;
+        }
+        mkdirSync(dirname(outAbs), { recursive: true });
+        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            out: body.out,
+            rowCount: valid.length,
+            duplicatesDropped,
+            histogram,
+            summary: formatHistogram(histogram),
+          }),
+        );
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
     // API: read the rows of one dataset (for the in-app row viewer).
     if (url.pathname === "/api/datasets/rows" && req.method === "GET") {
       try {
@@ -1885,6 +1945,12 @@ const server = createServer(
           severities?: string[];
           tasks?: string[];
           metrics?: string[];
+          /**
+           * Preview/curate mode: generate + validate but DON'T write the file —
+           * the response carries the rows so the UI can let the user deselect
+           * duds, then POST the kept subset to /api/datasets/save.
+           */
+          preview?: boolean;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -2107,8 +2173,12 @@ const server = createServer(
           return;
         }
 
-        mkdirSync(dirname(outAbs), { recursive: true });
-        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        // Preview/curate mode: return the rows for review instead of writing.
+        const preview = body.preview === true;
+        if (!preview) {
+          mkdirSync(dirname(outAbs), { recursive: true });
+          writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        }
 
         const result = {
           out: body.out,
@@ -2117,6 +2187,7 @@ const server = createServer(
           histogram,
           summary: formatHistogram(histogram),
           backend,
+          ...(preview ? { preview: true, rows: valid } : {}),
           ...(seedInfo ? { seeds: seedInfo } : {}),
           ...(profileInfo ? { profile: profileInfo } : {}),
           ...(preset.turnMode === "multi"

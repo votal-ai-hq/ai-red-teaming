@@ -7,6 +7,7 @@ import {
   listGenerationProviders,
   listGenerationEngines,
   getDatasetTaxonomy,
+  saveDatasetRows,
   listProfiles,
   getDatasetRows,
   type DatasetRow,
@@ -332,6 +333,12 @@ export function DatasetsPage() {
   const [taxonomy, setTaxonomy] = useState<DatasetTaxonomy | null>(null);
   const [selCategories, setSelCategories] = useState<string[]>([]);
   const [selSeverities, setSelSeverities] = useState<string[]>([]);
+  // Curate-before-save: generate into a review list, keep the good rows.
+  const [reviewMode, setReviewMode] = useState(false);
+  const [curate, setCurate] = useState<
+    { rows: { row: DatasetRow; keep: boolean }[]; out: string } | null
+  >(null);
+  const [saving, setSaving] = useState(false);
   // Generation engine: a direct LLM engine id, or "data-designer". Default is
   // OpenAI (the direct path — no NeMo service required).
   const [engines, setEngines] = useState<GenerationEngine[]>(FALLBACK_ENGINES);
@@ -462,12 +469,17 @@ export function DatasetsPage() {
     setOk(null);
     setProgress(null);
     setLiveRows([]);
+    setCurate(null);
     const dir = kind === "quality" ? `quality-${family}` : `nemo-${family}`;
+    const out = `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`;
+    // Review/curate only makes sense for direct engines (they stream + return rows).
+    const isPreview = isDirect && reviewMode;
     const body = {
       preset: PRESETS[`${kind}-${family}`],
-      out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
+      out,
       count,
       backend: engine,
+      ...(isPreview ? { preview: true } : {}),
       ...(!isDirect ? { provider: providerId } : {}),
       ...(model.trim() ? { generationModel: model.trim() } : {}),
       ...(profileId ? { profileId } : {}),
@@ -494,19 +506,48 @@ export function DatasetsPage() {
                 ...rows,
               ].slice(0, 8),
             );
-          } else if (e.type === "done") setOk(okMessage(e));
-          else if (e.type === "error")
+          } else if (e.type === "done") {
+            if (e.preview && e.rows) {
+              setCurate({ rows: e.rows.map((r) => ({ row: r, keep: true })), out });
+              setOk(
+                `Generated ${e.rows.length} rows for review — untick any you don't want, then Save.`,
+              );
+            } else setOk(okMessage(e));
+          } else if (e.type === "error")
             setError(`${e.error}${e.detail ? ` — ${e.detail}` : ""}`);
         });
       } else {
         setOk(okMessage(await generateDataset(body)));
       }
-      await refresh();
+      if (!isPreview) await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setGenerating(false);
       setProgress(null);
+    }
+  };
+
+  const saveCurated = async () => {
+    if (!curate) return;
+    const kept = curate.rows.filter((c) => c.keep).map((c) => c.row);
+    if (kept.length === 0) {
+      setError("Select at least one row to save.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await saveDatasetRows({ out: curate.out, kind, rows: kept });
+      setOk(
+        `Saved ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates).`,
+      );
+      setCurate(null);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -709,8 +750,18 @@ export function DatasetsPage() {
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              Generate
+              {isDirect && reviewMode ? "Generate for review" : "Generate"}
             </Button>
+            {isDirect && (
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={reviewMode}
+                  onChange={(e) => setReviewMode(e.target.checked)}
+                />
+                Review before saving
+              </label>
+            )}
           </div>
           {!effInfo.apiKeyEnv ? (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -941,6 +992,99 @@ export function DatasetsPage() {
               <CheckCircle2 className="w-4 h-4" />
               <AlertDescription>{ok}</AlertDescription>
             </Alert>
+          )}
+
+          {curate && (
+            <div className="rounded-lg border border-border">
+              <div className="flex items-center justify-between gap-2 flex-wrap p-3 border-b border-border">
+                <span className="text-sm font-medium">
+                  Review {curate.rows.length} rows —{" "}
+                  {curate.rows.filter((c) => c.keep).length} selected
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurate((c) =>
+                        c ? { ...c, rows: c.rows.map((r) => ({ ...r, keep: true })) } : c,
+                      )
+                    }
+                  >
+                    All
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurate((c) =>
+                        c ? { ...c, rows: c.rows.map((r) => ({ ...r, keep: false })) } : c,
+                      )
+                    }
+                  >
+                    None
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCurate(null)}>
+                    Discard
+                  </Button>
+                  <Button size="sm" onClick={saveCurated} disabled={saving}>
+                    {saving ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    )}
+                    Save {curate.rows.filter((c) => c.keep).length}
+                  </Button>
+                </div>
+              </div>
+              <div className="max-h-96 overflow-y-auto p-3 space-y-2">
+                {curate.rows.map((c, i) => (
+                  <label
+                    key={i}
+                    className={`flex items-start gap-2 rounded-md border p-2 cursor-pointer ${c.keep ? "border-border" : "border-border/40 opacity-50"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0"
+                      checked={c.keep}
+                      onChange={() =>
+                        setCurate((cur) =>
+                          cur
+                            ? {
+                                ...cur,
+                                rows: cur.rows.map((r, j) =>
+                                  j === i ? { ...r, keep: !r.keep } : r,
+                                ),
+                              }
+                            : cur,
+                        )
+                      }
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {str(c.row.category) || str(c.row.task)}
+                        </Badge>
+                        {str(c.row.severity) && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {str(c.row.severity)}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-foreground whitespace-pre-wrap break-words mt-0.5">
+                        {str(c.row.prompt) || str(c.row.input)}
+                      </p>
+                      {(str(c.row.successCriteria) || str(c.row.reference)) && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          <span className="font-medium">grades as success if:</span>{" "}
+                          {str(c.row.successCriteria) || str(c.row.reference)}
+                        </p>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
