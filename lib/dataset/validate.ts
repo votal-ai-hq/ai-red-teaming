@@ -179,6 +179,24 @@ export function validateQualityRows(rows: unknown[]): QualityValidationResult {
   return { valid, errors, histogram, duplicatesDropped };
 }
 
+/**
+ * Merge new rows into an existing dataset (top-up / append), deduping across
+ * BOTH sets. Existing rows come first so they win a near-duplicate tie — a
+ * top-up never rewrites what's already there, it only adds genuinely new rows.
+ * `added` is how many net-new rows survived (i.e. weren't dupes of existing).
+ */
+export function mergeDatasets(
+  kind: "security" | "quality",
+  existing: unknown[],
+  incoming: unknown[],
+): (ValidationResult | QualityValidationResult) & { added: number } {
+  const existingCount = Array.isArray(existing) ? existing.length : 0;
+  const combined = [...(Array.isArray(existing) ? existing : []), ...incoming];
+  const res =
+    kind === "quality" ? validateQualityRows(combined) : validateRows(combined);
+  return { ...res, added: res.valid.length - existingCount };
+}
+
 /** Pretty one-line-per-category histogram, sorted by count desc. */
 export function formatHistogram(histogram: Record<string, number>): string {
   const rows = Object.entries(histogram).sort((a, b) => b[1] - a[1]);

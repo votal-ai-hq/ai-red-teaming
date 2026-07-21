@@ -11,7 +11,7 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, extname, dirname, resolve as resolvePath } from "node:path";
+import { join, extname, dirname, basename, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -33,8 +33,21 @@ import { analyzeCodebase } from "../lib/codebase-analyzer.js";
 import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
+import { defaultCategoryPool } from "../lib/dataset/category-set.js";
+import {
+  defaultQualityPool,
+  QUALITY_METRICS,
+} from "../lib/dataset/quality-set.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { generateWithOpenAI } from "../lib/dataset/openai-generator.js";
+import {
+  GENERATION_ENGINES,
+  getEngine,
+  isEngineId,
+  engineKeyConfigured,
+  resolveChat,
+  type EngineId,
+} from "../lib/dataset/generation-engines.js";
 import {
   DATASET_PROVIDERS,
   applyGenerationOverrides,
@@ -60,7 +73,18 @@ import {
   recordToRow,
   recordToQualityRow,
 } from "../lib/dataset/map-records.js";
-import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
+import {
+  validateRows,
+  validateQualityRows,
+  formatHistogram,
+  mergeDatasets,
+} from "../lib/dataset/validate.js";
+import { estimateCost } from "../lib/dataset/cost-estimate.js";
+import {
+  exportDataset,
+  exportContentType,
+  isExportFormat,
+} from "../lib/dataset/export.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
 import type { DatasetPreset, DatasetRow } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
@@ -1644,6 +1668,87 @@ const server = createServer(
       return;
     }
 
+    // API: save a curated set of rows as a dataset (used after preview/curate —
+    // the user reviewed generated rows and kept a subset).
+    if (url.pathname === "/api/datasets/save" && req.method === "POST") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req)) as {
+          out?: string;
+          kind?: string;
+          rows?: unknown[];
+          /** Top-up: merge into the existing `out` file instead of replacing. */
+          append?: boolean;
+        };
+        const outAbs = resolvePath(repoRoot, body.out || "");
+        if (
+          !body.out ||
+          !outAbs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !outAbs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "out must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        const rows = Array.isArray(body.rows) ? body.rows : [];
+        const kind = body.kind === "quality" ? "quality" : "security";
+        const gen = kind === "quality" ? validateQualityRows(rows) : validateRows(rows);
+        if (gen.errors.length > 0 || gen.valid.length === 0) {
+          res.writeHead(422, {
+            "Content-Type": "application/json",
+          });
+          res.end(
+            JSON.stringify({
+              error: "no valid rows to save",
+              invalid: gen.errors.length,
+              kept: gen.valid.length,
+              sampleErrors: gen.errors.slice(0, 10),
+            }),
+          );
+          return;
+        }
+        // Top-up: merge into the existing file, deduping across both sets.
+        let valid: unknown[] = gen.valid;
+        let histogram = gen.histogram;
+        let duplicatesDropped = gen.duplicatesDropped;
+        let added = gen.valid.length;
+        const append = body.append === true && existsSync(outAbs);
+        if (append) {
+          let existingRows: unknown[] = [];
+          try {
+            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
+            if (Array.isArray(parsed)) existingRows = parsed;
+          } catch {
+            /* unreadable existing file — treat as fresh write */
+          }
+          const merged = mergeDatasets(kind, existingRows, gen.valid);
+          added = merged.added;
+          duplicatesDropped += gen.valid.length - merged.added;
+          valid = merged.valid;
+          histogram = merged.histogram;
+        }
+        mkdirSync(dirname(outAbs), { recursive: true });
+        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            out: body.out,
+            rowCount: valid.length,
+            duplicatesDropped,
+            histogram,
+            summary: formatHistogram(histogram),
+            ...(append ? { appended: true, added } : {}),
+          }),
+        );
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
     // API: read the rows of one dataset (for the in-app row viewer).
     if (url.pathname === "/api/datasets/rows" && req.method === "GET") {
       try {
@@ -1676,6 +1781,71 @@ const server = createServer(
         res.end(
           JSON.stringify({ path: rel, total: all.length, rows: all.slice(0, limit) }),
         );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: export a dataset to an interop format (jsonl | csv) for other eval
+    // tooling. Read-only; contained to data/datasets/*.json like the row viewer.
+    if (url.pathname === "/api/datasets/export" && req.method === "GET") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const rel = url.searchParams.get("path") || "";
+        const format = url.searchParams.get("format") || "jsonl";
+        if (!isExportFormat(format)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "format must be jsonl or csv" }));
+          return;
+        }
+        const abs = resolvePath(repoRoot, rel);
+        if (
+          !abs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !abs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "path must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        if (!existsSync(abs)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
+          return;
+        }
+        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
+        const all = Array.isArray(parsed) ? parsed : [];
+        const body = exportDataset(all, format);
+        const base = basename(abs).replace(/\.json$/, "");
+        res.writeHead(200, {
+          "Content-Type": exportContentType(format),
+          "Content-Disposition": `attachment; filename="${base}.${format}"`,
+        });
+        res.end(body);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: rough pre-generation cost estimate for a direct engine. Pure compute,
+    // no I/O — lets the UI show "~$X for N rows" before the user commits.
+    if (url.pathname === "/api/datasets/cost" && req.method === "GET") {
+      try {
+        const q = url.searchParams;
+        const estimate = estimateCost({
+          backend: q.get("backend") || "openai",
+          model: q.get("model") || undefined,
+          count: parseInt(q.get("count") || "0", 10) || 0,
+          turnMode: q.get("turnMode") === "multi" ? "multi" : "single",
+          maxTurns: parseInt(q.get("maxTurns") || "3", 10) || 3,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(estimate));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));
@@ -1757,6 +1927,55 @@ const server = createServer(
       return;
     }
 
+    // API: the taxonomy a user can select from for a given kind + family —
+    // attack categories + severities (security) or tasks + metrics (quality).
+    if (url.pathname === "/api/datasets/taxonomy" && req.method === "GET") {
+      const kind = url.searchParams.get("kind") === "quality" ? "quality" : "security";
+      const family = url.searchParams.get("family") === "agent" ? "agent" : "mcp";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (kind === "quality") {
+        res.end(
+          JSON.stringify({
+            kind,
+            family,
+            tasks: defaultQualityPool(family),
+            metrics: QUALITY_METRICS,
+          }),
+        );
+      } else {
+        res.end(
+          JSON.stringify({
+            kind,
+            family,
+            categories: defaultCategoryPool(family),
+            severities: ["critical", "high", "medium", "low"],
+          }),
+        );
+      }
+      return;
+    }
+
+    // API: direct-generation engines (OpenAI / Anthropic / OpenRouter / Ollama)
+    // + whether each engine's API key is configured, so the UI can offer an
+    // informed engine/model choice (single source of truth is
+    // lib/dataset/generation-engines.ts).
+    if (url.pathname === "/api/datasets/engines" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          engines: GENERATION_ENGINES.map((e) => ({
+            id: e.id,
+            label: e.label,
+            defaultModel: e.defaultModel,
+            suggestedModels: e.suggestedModels,
+            apiKeyEnv: e.apiKeyEnv ?? null,
+            keyConfigured: engineKeyConfigured(e),
+          })),
+        }),
+      );
+      return;
+    }
+
     // API: generation providers + whether their API key is configured, so the
     // UI can offer an informed provider/model choice (single source of truth
     // is lib/dataset/provider-options.ts).
@@ -1808,10 +2027,31 @@ const server = createServer(
           turnMode?: "single" | "multi";
           /** Max turns for multi-turn generation (clamped to 2..8). */
           maxTurns?: number;
-          /** "data-designer" (default) or "openai" (call OpenAI directly). */
-          backend?: "data-designer" | "openai";
-          /** Stream row-by-row NDJSON progress (OpenAI-direct only). */
+          /**
+           * Generation engine: a direct LLM engine (openai | anthropic |
+           * openrouter | ollama) or the NeMo "data-designer" service. Defaults
+           * to "openai".
+           */
+          backend?: string;
+          /** Stream row-by-row NDJSON progress (direct engines only). */
           stream?: boolean;
+          /** Custom instructions injected into the generation prompt. */
+          instructions?: string;
+          /** Few-shot style examples the generator should match. */
+          examples?: string[];
+          /** Focus generation on a subset of the taxonomy. */
+          categories?: string[];
+          severities?: string[];
+          tasks?: string[];
+          metrics?: string[];
+          /** Top-up: merge generated rows into the existing `out` file. */
+          append?: boolean;
+          /**
+           * Preview/curate mode: generate + validate but DON'T write the file —
+           * the response carries the rows so the UI can let the user deselect
+           * duds, then POST the kept subset to /api/datasets/save.
+           */
+          preview?: boolean;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1845,6 +2085,27 @@ const server = createServer(
           readFileSync(presetAbs, "utf-8"),
         ) as DatasetPreset;
         if (body.count) preset.count = body.count;
+        if (typeof body.instructions === "string" && body.instructions.trim()) {
+          // Cap so a runaway paste can't dominate the generation prompt.
+          preset.customInstructions = body.instructions.trim().slice(0, 4000);
+        }
+        if (Array.isArray(body.examples)) {
+          // Few-shot exemplars; builder caps again, but bound here too.
+          const ex = body.examples
+            .map((e) => String(e ?? "").trim())
+            .filter(Boolean)
+            .slice(0, 8);
+          if (ex.length) preset.examples = ex;
+        }
+        // Focus the taxonomy: only non-empty selections override the preset's
+        // full pool. Invalid values fail closed in the config builder.
+        const strArr = (x: unknown) =>
+          Array.isArray(x) ? x.map(String).filter(Boolean) : [];
+        if (strArr(body.categories).length) preset.categories = strArr(body.categories);
+        if (strArr(body.severities).length)
+          preset.severities = strArr(body.severities) as DatasetPreset["severities"];
+        if (strArr(body.tasks).length) preset.tasks = strArr(body.tasks);
+        if (strArr(body.metrics).length) preset.metrics = strArr(body.metrics);
         if (body.turnMode === "single" || body.turnMode === "multi") {
           preset.turnMode = body.turnMode;
         }
@@ -1860,13 +2121,23 @@ const server = createServer(
           res.end(JSON.stringify({ error: overrideError }));
           return;
         }
-        // Direct-OpenAI generation must use an OpenAI model — a NIM model id
-        // (e.g. "meta/llama-…") won't resolve against OpenAI. Force provider and
-        // fall back to a sensible OpenAI default if the model isn't OpenAI-shaped.
-        if (body.backend === "openai") {
-          preset.provider = "openai";
-          if (!preset.generationModel || preset.generationModel.includes("/")) {
-            preset.generationModel = "gpt-4o-mini";
+        // Resolve the generation backend. Default is the "openai" direct
+        // engine; "data-designer" keeps the NeMo service path. Any direct
+        // engine that isn't explicitly given a model uses the engine's default.
+        const backendRaw = body.backend ?? "openai";
+        if (backendRaw !== "data-designer" && !isEngineId(backendRaw)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: `unknown engine "${backendRaw}" (expected data-designer or one of: ${GENERATION_ENGINES.map((e) => e.id).join(", ")})`,
+            }),
+          );
+          return;
+        }
+        if (backendRaw !== "data-designer") {
+          const engine = getEngine(backendRaw as EngineId)!;
+          if (!body.generationModel) {
+            preset.generationModel = engine.defaultModel;
           }
         }
         if (preset.family !== "mcp" && preset.family !== "agent") {
@@ -1938,15 +2209,17 @@ const server = createServer(
             ? buildQualityDataDesignerConfig(preset, seeds)
             : buildDataDesignerConfig(preset, seeds);
 
-        // Generation backend: "openai" calls OpenAI directly (no Data Designer
-        // service); "data-designer" (default) posts to the NeMo microservice.
-        // Same config in, same records out — everything else is unchanged.
-        const backend = body.backend === "openai" ? "openai" : "data-designer";
+        // Generation backend: a direct LLM engine (openai | anthropic |
+        // openrouter | ollama) calls that provider directly (no Data Designer
+        // service); "data-designer" posts to the NeMo microservice. Same config
+        // in, same records out — everything else is unchanged.
+        const backend = backendRaw === "data-designer" ? "data-designer" : (backendRaw as EngineId);
+        const isDirect = backend !== "data-designer";
 
-        // Live streaming (OpenAI-direct only — Data Designer returns a batch).
+        // Live streaming (direct engines only — Data Designer returns a batch).
         // Emits NDJSON: {type:"row",...} per generated row, then a final
         // {type:"done",...} or {type:"error",...}.
-        const streaming = backend === "openai" && body.stream === true;
+        const streaming = isDirect && body.stream === true;
         if (streaming) {
           res.writeHead(200, {
             "Content-Type": "application/x-ndjson",
@@ -1960,8 +2233,10 @@ const server = createServer(
         streamStarted = streaming;
 
         let records;
-        if (backend === "openai") {
+        if (isDirect) {
+          const chat = resolveChat(backend as EngineId);
           records = await generateWithOpenAI(ddConfig, preset.count ?? 300, {
+            chat,
             onRow: streaming
               ? (rec, index, total) => {
                   const row =
@@ -1985,10 +2260,15 @@ const server = createServer(
           const client = new NemoDataDesignerClient();
           records = await client.generate(ddConfig, preset.count);
         }
-        const { valid, errors, histogram, duplicatesDropped } =
+        // Validate the freshly generated rows (the quality gate is on these).
+        const gen =
           kind === "quality"
             ? validateQualityRows(recordsToQualityRows(records))
             : validateRows(recordsToRows(records, preset.family));
+        const errors = gen.errors;
+        let valid: unknown[] = gen.valid;
+        let histogram = gen.histogram;
+        let duplicatesDropped = gen.duplicatesDropped;
 
         if (errors.length > 0 || valid.length === 0) {
           const payload = {
@@ -2007,8 +2287,29 @@ const server = createServer(
           return;
         }
 
-        mkdirSync(dirname(outAbs), { recursive: true });
-        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        // Preview/curate mode: return the rows for review instead of writing.
+        const preview = body.preview === true;
+        // Top-up: merge into the existing file, deduping across both sets.
+        const append = body.append === true && !preview && existsSync(outAbs);
+        let addedCount = valid.length;
+        if (append) {
+          let existingRows: unknown[] = [];
+          try {
+            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
+            if (Array.isArray(parsed)) existingRows = parsed;
+          } catch {
+            /* unreadable existing file — treat as fresh write */
+          }
+          const merged = mergeDatasets(kind, existingRows, valid);
+          addedCount = merged.added;
+          duplicatesDropped += valid.length - merged.added;
+          valid = merged.valid;
+          histogram = merged.histogram;
+        }
+        if (!preview) {
+          mkdirSync(dirname(outAbs), { recursive: true });
+          writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        }
 
         const result = {
           out: body.out,
@@ -2017,6 +2318,8 @@ const server = createServer(
           histogram,
           summary: formatHistogram(histogram),
           backend,
+          ...(append ? { appended: true, added: addedCount } : {}),
+          ...(preview ? { preview: true, rows: valid } : {}),
           ...(seedInfo ? { seeds: seedInfo } : {}),
           ...(profileInfo ? { profile: profileInfo } : {}),
           ...(preset.turnMode === "multi"

@@ -49,8 +49,9 @@ export interface OpenAiGeneratorOptions {
   signal?: AbortSignal;
 }
 
-/** Default chat impl backed by the OpenAI SDK. */
-function openAiChat(apiKey: string, baseURL?: string): ChatFn {
+/** Chat impl backed by the OpenAI SDK (also serves OpenAI-compatible endpoints
+ *  like OpenRouter and Ollama via a custom baseURL). */
+export function openAiChat(apiKey: string, baseURL?: string): ChatFn {
   const client = new OpenAI({ apiKey, baseURL });
   return async ({ model, user, json, signal }) => {
     const res = await client.chat.completions.create(

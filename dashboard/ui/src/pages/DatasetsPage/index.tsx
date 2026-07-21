@@ -5,19 +5,28 @@ import {
   generateDatasetStream,
   listEvalRuns,
   listGenerationProviders,
+  listGenerationEngines,
+  getDatasetTaxonomy,
+  saveDatasetRows,
+  estimateGenerationCost,
+  fetchDatasetExport,
   listProfiles,
   getDatasetRows,
   type DatasetRow,
   type DatasetSummary,
+  type DatasetTaxonomy,
   type EvalTrend,
   type GenerationProvider,
+  type GenerationEngine,
   type ProfileSummary,
+  type CostEstimate,
 } from "@/api/datasets";
 import { ProfileWizard } from "./ProfileWizard";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -36,6 +45,7 @@ import {
   ChevronRight,
   ChevronDown,
   ArrowRight,
+  Download,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -63,6 +73,14 @@ const FALLBACK_PROVIDERS: GenerationProvider[] = [
     apiKeyEnv: "OPENAI_API_KEY",
     keyConfigured: true,
   },
+];
+
+/** Direct-generation engines, used until /api/datasets/engines answers. */
+const FALLBACK_ENGINES: GenerationEngine[] = [
+  { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini", suggestedModels: ["gpt-4o-mini", "gpt-4o"], apiKeyEnv: "OPENAI_API_KEY", keyConfigured: true },
+  { id: "anthropic", label: "Anthropic", defaultModel: "claude-opus-4-8", suggestedModels: ["claude-opus-4-8", "claude-sonnet-5"], apiKeyEnv: "ANTHROPIC_API_KEY", keyConfigured: true },
+  { id: "openrouter", label: "OpenRouter", defaultModel: "openai/gpt-4o-mini", suggestedModels: ["openai/gpt-4o-mini", "anthropic/claude-opus-4-8"], apiKeyEnv: "OPENROUTER_API_KEY", keyConfigured: true },
+  { id: "ollama", label: "Ollama (local)", defaultModel: "llama3.1", suggestedModels: ["llama3.1", "qwen2.5"], apiKeyEnv: null, keyConfigured: true },
 ];
 
 function topCategories(hist: Record<string, number>, n = 4): string[] {
@@ -199,6 +217,30 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"jsonl" | "csv" | null>(null);
+
+  const doExport = async (format: "jsonl" | "csv") => {
+    setExporting(format);
+    setErr(null);
+    try {
+      const text = await fetchDatasetExport(d.path, format);
+      const blob = new Blob([text], {
+        type: format === "csv" ? "text/csv" : "application/x-ndjson",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${d.name}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const toggle = async () => {
     const next = !open;
@@ -265,6 +307,39 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
             )}
             View rows
           </Button>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">Export:</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              disabled={exporting !== null}
+              onClick={() => doExport("jsonl")}
+              title="Download as newline-delimited JSON (promptfoo, OpenAI evals)"
+            >
+              {exporting === "jsonl" ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Download className="w-3 h-3" />
+              )}
+              JSONL
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              disabled={exporting !== null}
+              onClick={() => doExport("csv")}
+              title="Download as CSV (spreadsheets, deepeval CSV import)"
+            >
+              {exporting === "csv" ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Download className="w-3 h-3" />
+              )}
+              CSV
+            </Button>
+          </div>
         </div>
       </div>
       {open && (
@@ -304,7 +379,7 @@ export function DatasetsPage() {
     FALLBACK_PROVIDERS,
   );
   const [providerId, setProviderId] = useState("nim");
-  const [model, setModel] = useState(FALLBACK_PROVIDERS[0].defaultModel);
+  const [model, setModel] = useState(FALLBACK_ENGINES[0].defaultModel);
   const [count, setCount] = useState(200);
   const [outName, setOutName] = useState("v1");
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -312,9 +387,29 @@ export function DatasetsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [turnMode, setTurnMode] = useState<"single" | "multi">("single");
   const [maxTurns, setMaxTurns] = useState(3);
-  const [backend, setBackend] = useState<"data-designer" | "openai">(
-    "data-designer",
-  );
+  // Custom instructions injected into the generation prompt — the iterate lever.
+  const [instructions, setInstructions] = useState("");
+  // Few-shot style examples (one per line) the generator should match.
+  const [examples, setExamples] = useState("");
+  // Top-up: append generated rows to an existing dataset instead of replacing.
+  const [append, setAppend] = useState(false);
+  // Live pre-generation cost estimate for the current engine/model/count.
+  const [cost, setCost] = useState<CostEstimate | null>(null);
+  // Taxonomy focus: available options for the current kind/family + the user's
+  // selection. Empty selection = the full pool (no override).
+  const [taxonomy, setTaxonomy] = useState<DatasetTaxonomy | null>(null);
+  const [selCategories, setSelCategories] = useState<string[]>([]);
+  const [selSeverities, setSelSeverities] = useState<string[]>([]);
+  // Curate-before-save: generate into a review list, keep the good rows.
+  const [reviewMode, setReviewMode] = useState(false);
+  const [curate, setCurate] = useState<
+    { rows: { row: DatasetRow; keep: boolean }[]; out: string; append: boolean } | null
+  >(null);
+  const [saving, setSaving] = useState(false);
+  // Generation engine: a direct LLM engine id, or "data-designer". Default is
+  // OpenAI (the direct path — no NeMo service required).
+  const [engines, setEngines] = useState<GenerationEngine[]>(FALLBACK_ENGINES);
+  const [engine, setEngine] = useState<string>("openai");
   const [seedConfigPath, setSeedConfigPath] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -348,35 +443,92 @@ export function DatasetsPage() {
   useEffect(() => {
     refresh();
     listGenerationProviders()
+      .then((r) => r.providers.length > 0 && setProviders(r.providers))
+      .catch(() => {}); // older server — keep fallback
+    listGenerationEngines()
       .then((r) => {
-        if (r.providers.length > 0) {
-          setProviders(r.providers);
+        if (r.engines.length > 0) {
+          setEngines(r.engines);
           setModel(
-            (m) => r.providers.find((p) => p.id === "nim")?.defaultModel ?? m,
+            (m) => r.engines.find((e) => e.id === "openai")?.defaultModel ?? m,
           );
         }
       })
-      .catch(() => {}); // older server without the endpoint — keep fallback
+      .catch(() => {});
   }, []);
+
+  // Load the selectable taxonomy whenever kind/family change; clear any stale
+  // selection so it can't carry a category from the other family.
+  useEffect(() => {
+    getDatasetTaxonomy(kind, family)
+      .then((t) => setTaxonomy(t))
+      .catch(() => setTaxonomy(null));
+    setSelCategories([]);
+    setSelSeverities([]);
+  }, [kind, family]);
+
+  // Live cost estimate — debounced so typing in the count field doesn't spam
+  // the endpoint. Cleared on unmount / dependency change.
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(() => {
+      estimateGenerationCost({
+        backend: engine,
+        model: model.trim() || undefined,
+        count,
+        turnMode,
+        maxTurns,
+      })
+        .then((c) => !cancelled && setCost(c))
+        .catch(() => !cancelled && setCost(null));
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [engine, model, count, turnMode, maxTurns]);
+
+  const toggle = (
+    list: string[],
+    setList: (v: string[]) => void,
+    value: string,
+  ) =>
+    setList(
+      list.includes(value) ? list.filter((v) => v !== value) : [...list, value],
+    );
 
   const provider =
     providers.find((p) => p.id === providerId) ?? providers[0];
-  const openaiProvider =
-    providers.find((p) => p.id === "openai") ?? provider;
-  // Direct-OpenAI always uses OpenAI, regardless of the DD provider chips.
-  const effProvider = backend === "openai" ? openaiProvider : provider;
+  const directEngine = engines.find((e) => e.id === engine);
+  const isDirect = engine !== "data-designer";
+  // Normalized info for the model input / key hint / footer — from the direct
+  // engine when one is selected, else the Data Designer provider.
+  const effInfo = directEngine
+    ? {
+        label: directEngine.label,
+        defaultModel: directEngine.defaultModel,
+        suggestedModels: directEngine.suggestedModels,
+        apiKeyEnv: directEngine.apiKeyEnv,
+        keyConfigured: directEngine.keyConfigured,
+      }
+    : {
+        label: provider.label,
+        defaultModel: provider.defaultModel,
+        suggestedModels: provider.suggestedModels,
+        apiKeyEnv: provider.apiKeyEnv as string | null,
+        keyConfigured: provider.keyConfigured,
+      };
 
   const selectProvider = (p: GenerationProvider) => {
     setProviderId(p.id);
     setModel(p.defaultModel);
   };
 
-  const selectBackend = (b: "data-designer" | "openai") => {
-    setBackend(b);
-    // Moving to direct-OpenAI: swap a NIM model id for an OpenAI default.
-    if (b === "openai" && (!model.trim() || model.includes("/"))) {
-      setModel(openaiProvider.defaultModel);
-    }
+  const selectEngine = (id: string) => {
+    setEngine(id);
+    const e = engines.find((x) => x.id === id);
+    if (e) setModel(e.defaultModel);
+    else setModel(provider.defaultModel); // data-designer
   };
 
   const okMessage = (res: {
@@ -387,6 +539,8 @@ export function DatasetsPage() {
     profile?: { name: string; tools: number; policies: number; rules: number };
     turnMode?: "multi";
     maxTurns?: number;
+    appended?: boolean;
+    added?: number;
   }) => {
     const seedNote = res.seeds
       ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
@@ -396,7 +550,10 @@ export function DatasetsPage() {
       : "";
     const turnNote =
       res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
-    return `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`;
+    const lead = res.appended
+      ? `Appended ${res.added} new rows -> ${res.out} (now ${res.rowCount} total, `
+      : `Generated ${res.rowCount} rows -> ${res.out} (`;
+    return `${lead}dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`;
   };
 
   const onGenerate = async () => {
@@ -405,20 +562,38 @@ export function DatasetsPage() {
     setOk(null);
     setProgress(null);
     setLiveRows([]);
+    setCurate(null);
     const dir = kind === "quality" ? `quality-${family}` : `nemo-${family}`;
+    const out = `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`;
+    // Review/curate only makes sense for direct engines (they stream + return rows).
+    const isPreview = isDirect && reviewMode;
+    // Few-shot examples: one per line, blank lines dropped.
+    const examplesList = examples
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 8);
     const body = {
       preset: PRESETS[`${kind}-${family}`],
-      out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
+      out,
       count,
-      backend,
-      provider: backend === "openai" ? "openai" : providerId,
+      backend: engine,
+      ...(isPreview ? { preview: true } : {}),
+      ...(!isDirect ? { provider: providerId } : {}),
       ...(model.trim() ? { generationModel: model.trim() } : {}),
       ...(profileId ? { profileId } : {}),
       ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
+      ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+      ...(examplesList.length ? { examples: examplesList } : {}),
+      ...(append && !isPreview ? { append: true } : {}),
+      ...(kind === "security" && selCategories.length ? { categories: selCategories } : {}),
+      ...(kind === "security" && selSeverities.length ? { severities: selSeverities } : {}),
+      ...(kind === "quality" && selCategories.length ? { tasks: selCategories } : {}),
+      ...(kind === "quality" && selSeverities.length ? { metrics: selSeverities } : {}),
       ...(seedConfigPath.trim() ? { seedConfigPath: seedConfigPath.trim() } : {}),
     };
     try {
-      if (backend === "openai") {
+      if (isDirect) {
         // Stream row-by-row so results appear as they're generated.
         let done = 0;
         await generateDatasetStream(body, (e) => {
@@ -432,19 +607,59 @@ export function DatasetsPage() {
                 ...rows,
               ].slice(0, 8),
             );
-          } else if (e.type === "done") setOk(okMessage(e));
-          else if (e.type === "error")
+          } else if (e.type === "done") {
+            if (e.preview && e.rows) {
+              setCurate({
+                rows: e.rows.map((r) => ({ row: r, keep: true })),
+                out,
+                append,
+              });
+              setOk(
+                `Generated ${e.rows.length} rows for review — untick any you don't want, then Save.`,
+              );
+            } else setOk(okMessage(e));
+          } else if (e.type === "error")
             setError(`${e.error}${e.detail ? ` — ${e.detail}` : ""}`);
         });
       } else {
         setOk(okMessage(await generateDataset(body)));
       }
-      await refresh();
+      if (!isPreview) await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setGenerating(false);
       setProgress(null);
+    }
+  };
+
+  const saveCurated = async () => {
+    if (!curate) return;
+    const kept = curate.rows.filter((c) => c.keep).map((c) => c.row);
+    if (kept.length === 0) {
+      setError("Select at least one row to save.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await saveDatasetRows({
+        out: curate.out,
+        kind,
+        rows: kept,
+        append: curate.append,
+      });
+      setOk(
+        res.appended
+          ? `Appended ${res.added} new rows -> ${res.out} (now ${res.rowCount} total, dropped ${res.duplicatesDropped} duplicates).`
+          : `Saved ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates).`,
+      );
+      setCurate(null);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -521,19 +736,22 @@ export function DatasetsPage() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Engine</Label>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-1">
+                {engines.map((e) => (
+                  <Button
+                    key={e.id}
+                    size="sm"
+                    variant={engine === e.id ? "default" : "outline"}
+                    onClick={() => selectEngine(e.id)}
+                    title={`Generate directly via ${e.label}${e.apiKeyEnv ? ` (needs ${e.apiKeyEnv})` : " (local, no key)"}`}
+                  >
+                    {e.label}
+                  </Button>
+                ))}
                 <Button
                   size="sm"
-                  variant={backend === "openai" ? "default" : "outline"}
-                  onClick={() => selectBackend("openai")}
-                  title="Call OpenAI directly — no Data Designer service needed"
-                >
-                  OpenAI direct
-                </Button>
-                <Button
-                  size="sm"
-                  variant={backend === "data-designer" ? "default" : "outline"}
-                  onClick={() => selectBackend("data-designer")}
+                  variant={engine === "data-designer" ? "default" : "outline"}
+                  onClick={() => selectEngine("data-designer")}
                   title="Generate via the NeMo Data Designer microservice"
                 >
                   Data Designer
@@ -577,7 +795,7 @@ export function DatasetsPage() {
                 )}
               </div>
             </div>
-            {backend === "data-designer" && (
+            {!isDirect && (
               <div className="space-y-1">
                 <Label className="text-xs">Provider</Label>
                 <div className="flex gap-1">
@@ -604,11 +822,11 @@ export function DatasetsPage() {
                 className="w-64 font-mono text-xs"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={effProvider.defaultModel}
+                placeholder={effInfo.defaultModel}
                 list="model-suggestions"
               />
               <datalist id="model-suggestions">
-                {effProvider.suggestedModels.map((m) => (
+                {effInfo.suggestedModels.map((m) => (
                   <option key={m} value={m} />
                 ))}
               </datalist>
@@ -644,22 +862,161 @@ export function DatasetsPage() {
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              Generate
+              {isDirect && reviewMode ? "Generate for review" : "Generate"}
             </Button>
+            {isDirect && (
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={reviewMode}
+                  onChange={(e) => setReviewMode(e.target.checked)}
+                />
+                Review before saving
+              </label>
+            )}
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={append}
+                onChange={(e) => setAppend(e.target.checked)}
+              />
+              Append to existing (top up)
+            </label>
+            {cost && (
+              <span
+                className="text-xs text-muted-foreground ml-auto"
+                title={cost.note}
+              >
+                {cost.priced
+                  ? cost.usd === 0
+                    ? "Est. cost: free (local)"
+                    : `Est. cost: ~$${cost.usd < 0.01 ? cost.usd.toFixed(4) : cost.usd.toFixed(2)}`
+                  : "Est. cost: n/a"}
+                <span className="opacity-60"> · {cost.calls} calls</span>
+              </span>
+            )}
           </div>
-          {effProvider.keyConfigured ? (
+          {!effInfo.apiKeyEnv ? (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <code>{effProvider.apiKeyEnv}</code> is configured on the server.
-              {backend === "openai" && " No Data Designer service needed."}
+              {effInfo.label} runs locally — no API key needed (set{" "}
+              <code>OLLAMA_BASE_URL</code> if not on localhost).
+            </p>
+          ) : effInfo.keyConfigured ? (
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <code>{effInfo.apiKeyEnv}</code> is configured on the server.
+              {isDirect && " No Data Designer service needed."}
             </p>
           ) : (
             <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              <code>{effProvider.apiKeyEnv}</code> is not set on the server —
-              generation with {effProvider.label} will fail until it is.
+              <code>{effInfo.apiKeyEnv}</code> is not set on the server —
+              generation with {effInfo.label} will fail until it is.
             </p>
           )}
+          {taxonomy &&
+            (() => {
+              const primary = taxonomy.categories ?? taxonomy.tasks ?? [];
+              const secondary = taxonomy.severities ?? taxonomy.metrics ?? [];
+              const primaryLabel = kind === "security" ? "Categories" : "Tasks";
+              const secondaryLabel = kind === "security" ? "Severities" : "Metrics";
+              return (
+                <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
+                  <Label className="text-xs">
+                    Focus (optional) — leave empty to cover the full set
+                  </Label>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {primaryLabel}
+                      {selCategories.length ? ` (${selCategories.length} selected)` : " (all)"}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {primary.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => toggle(selCategories, setSelCategories, c)}
+                        >
+                          <Badge
+                            variant={selCategories.includes(c) ? "default" : "outline"}
+                            className="cursor-pointer text-[10px]"
+                          >
+                            {c}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {secondaryLabel}
+                      {selSeverities.length ? ` (${selSeverities.length} selected)` : " (all)"}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {secondary.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => toggle(selSeverities, setSelSeverities, s)}
+                        >
+                          <Badge
+                            variant={selSeverities.includes(s) ? "default" : "outline"}
+                            className="cursor-pointer text-[10px]"
+                          >
+                            {s}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="instructions">
+              Custom instructions (optional) — iterate on the generation prompt
+            </Label>
+            <Textarea
+              id="instructions"
+              className="w-full min-h-16 text-xs"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder={
+                kind === "security"
+                  ? "e.g. Make the attacks subtle and conversational; target the checkout/payment flow; use British English; avoid obvious jailbreak phrasing."
+                  : "e.g. Write terse, realistic support questions; assume the user is non-technical; focus on refund and shipping scenarios."
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Injected into the generation prompt to steer style and content, then
+              regenerate. The output format and grading contract are preserved.
+              Tweak these and hit Generate again to iterate.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="examples">
+              Few-shot examples (optional) — one per line, up to 8
+            </Label>
+            <Textarea
+              id="examples"
+              className="w-full min-h-16 text-xs font-mono"
+              value={examples}
+              onChange={(e) => setExamples(e.target.value)}
+              placeholder={
+                kind === "security"
+                  ? "Paste a few real (or realistic) attacker messages — one per line.\nThe generator matches their shape and difficulty without copying them."
+                  : "Paste a few real user requests — one per line.\nThe generator matches their tone and shape without copying them."
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              The strongest lever for "make it look like my app's traffic." Examples
+              steer shape/tone; they are never emitted verbatim.
+            </p>
+          </div>
+
           <div className="space-y-1 rounded-lg border border-dashed border-border p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <Label className="text-xs flex items-center gap-1.5">
@@ -727,10 +1084,10 @@ export function DatasetsPage() {
             Writes to{" "}
             <code>data/datasets/{kind === "quality" ? "quality" : "nemo"}-{family}/{outName || "v1"}.json</code>.
             {kind === "quality" ? " Quality datasets grade correctness against a reference and run on the quality scorer (not the security engine)." : " Security datasets are adversarial and run through the red-team engine."}
-            {" "}Rows are generated by <strong>{effProvider.label}</strong> (
-            <code>{model || effProvider.defaultModel}</code>){" "}
-            {backend === "openai" ? (
-              <>directly via the OpenAI API — no Data Designer service required.</>
+            {" "}Rows are generated by <strong>{effInfo.label}</strong> (
+            <code>{model || effInfo.defaultModel}</code>){" "}
+            {isDirect ? (
+              <>directly via the {effInfo.label} API — no Data Designer service required.</>
             ) : (
               <>
                 via the NeMo Data Designer service, which must be reachable (
@@ -789,6 +1146,99 @@ export function DatasetsPage() {
               <CheckCircle2 className="w-4 h-4" />
               <AlertDescription>{ok}</AlertDescription>
             </Alert>
+          )}
+
+          {curate && (
+            <div className="rounded-lg border border-border">
+              <div className="flex items-center justify-between gap-2 flex-wrap p-3 border-b border-border">
+                <span className="text-sm font-medium">
+                  Review {curate.rows.length} rows —{" "}
+                  {curate.rows.filter((c) => c.keep).length} selected
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurate((c) =>
+                        c ? { ...c, rows: c.rows.map((r) => ({ ...r, keep: true })) } : c,
+                      )
+                    }
+                  >
+                    All
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurate((c) =>
+                        c ? { ...c, rows: c.rows.map((r) => ({ ...r, keep: false })) } : c,
+                      )
+                    }
+                  >
+                    None
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCurate(null)}>
+                    Discard
+                  </Button>
+                  <Button size="sm" onClick={saveCurated} disabled={saving}>
+                    {saving ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    )}
+                    Save {curate.rows.filter((c) => c.keep).length}
+                  </Button>
+                </div>
+              </div>
+              <div className="max-h-96 overflow-y-auto p-3 space-y-2">
+                {curate.rows.map((c, i) => (
+                  <label
+                    key={i}
+                    className={`flex items-start gap-2 rounded-md border p-2 cursor-pointer ${c.keep ? "border-border" : "border-border/40 opacity-50"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0"
+                      checked={c.keep}
+                      onChange={() =>
+                        setCurate((cur) =>
+                          cur
+                            ? {
+                                ...cur,
+                                rows: cur.rows.map((r, j) =>
+                                  j === i ? { ...r, keep: !r.keep } : r,
+                                ),
+                              }
+                            : cur,
+                        )
+                      }
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {str(c.row.category) || str(c.row.task)}
+                        </Badge>
+                        {str(c.row.severity) && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {str(c.row.severity)}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-foreground whitespace-pre-wrap break-words mt-0.5">
+                        {str(c.row.prompt) || str(c.row.input)}
+                      </p>
+                      {(str(c.row.successCriteria) || str(c.row.reference)) && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          <span className="font-medium">grades as success if:</span>{" "}
+                          {str(c.row.successCriteria) || str(c.row.reference)}
+                        </p>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

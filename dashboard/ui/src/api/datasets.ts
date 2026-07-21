@@ -26,8 +26,22 @@ export interface GenerateDatasetRequest {
   turnMode?: "single" | "multi";
   /** Max turns for multi-turn generation (2..8). */
   maxTurns?: number;
-  /** Generation engine: "data-designer" (default) or "openai" (direct, no service). */
-  backend?: "data-designer" | "openai";
+  /** Generation engine: a direct LLM engine id (openai | anthropic | openrouter
+   *  | ollama) or "data-designer". Defaults to "openai". */
+  backend?: string;
+  /** Custom instructions injected into the generation prompt (iterate lever). */
+  instructions?: string;
+  /** Few-shot style examples the generator should match. */
+  examples?: string[];
+  /** Focus generation on a subset of the taxonomy (empty = full pool). */
+  categories?: string[];
+  severities?: string[];
+  tasks?: string[];
+  metrics?: string[];
+  /** Preview/curate: generate + validate but don't write; return the rows. */
+  preview?: boolean;
+  /** Top-up: merge generated rows into the existing `out` file. */
+  append?: boolean;
 }
 
 export interface GenerationProvider {
@@ -43,6 +57,34 @@ export interface GenerationProvider {
 export function listGenerationProviders() {
   return apiFetch<{ providers: GenerationProvider[] }>(
     "/api/datasets/providers",
+  );
+}
+
+export interface GenerationEngine {
+  id: string;
+  label: string;
+  defaultModel: string;
+  suggestedModels: string[];
+  apiKeyEnv: string | null;
+  keyConfigured: boolean;
+}
+
+export function listGenerationEngines() {
+  return apiFetch<{ engines: GenerationEngine[] }>("/api/datasets/engines");
+}
+
+export interface DatasetTaxonomy {
+  kind: "security" | "quality";
+  family: string;
+  categories?: string[];
+  severities?: string[];
+  tasks?: string[];
+  metrics?: string[];
+}
+
+export function getDatasetTaxonomy(kind: string, family: string) {
+  return apiFetch<DatasetTaxonomy>(
+    `/api/datasets/taxonomy?kind=${kind}&family=${family}`,
   );
 }
 
@@ -121,7 +163,44 @@ export interface GenerateDatasetResponse {
   turnMode?: "multi";
   maxTurns?: number;
   /** Which engine produced the rows. */
-  backend?: "data-designer" | "openai";
+  backend?: string;
+  /** Present when rows were appended to an existing dataset (top-up). */
+  appended?: boolean;
+  added?: number;
+}
+
+export interface CostEstimate {
+  usd: number;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  priced: boolean;
+  note: string;
+}
+
+/** Rough pre-generation cost estimate for a direct engine. */
+export function estimateGenerationCost(params: {
+  backend: string;
+  model?: string;
+  count: number;
+  turnMode?: "single" | "multi";
+  maxTurns?: number;
+}) {
+  const q = new URLSearchParams({
+    backend: params.backend,
+    count: String(params.count),
+    turnMode: params.turnMode ?? "single",
+    maxTurns: String(params.maxTurns ?? 3),
+  });
+  if (params.model) q.set("model", params.model);
+  return apiFetch<CostEstimate>(`/api/datasets/cost?${q.toString()}`);
+}
+
+/** Fetch a dataset rendered in an interop format (jsonl | csv) as text. */
+export function fetchDatasetExport(path: string, format: "jsonl" | "csv") {
+  return apiFetch<string>(
+    `/api/datasets/export?path=${encodeURIComponent(path)}&format=${format}`,
+  );
 }
 
 export function listDatasets() {
@@ -135,6 +214,20 @@ export function getDatasetRows(path: string, limit = 200) {
   return apiFetch<{ path: string; total: number; rows: DatasetRow[] }>(
     `/api/datasets/rows?path=${encodeURIComponent(path)}&limit=${limit}`,
   );
+}
+
+/** Save a curated subset of rows as a dataset (after preview/curate). */
+export function saveDatasetRows(body: {
+  out: string;
+  kind: "security" | "quality";
+  rows: DatasetRow[];
+  /** Top-up: merge into the existing file instead of replacing. */
+  append?: boolean;
+}) {
+  return apiFetch<GenerateDatasetResponse>("/api/datasets/save", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function generateDataset(body: GenerateDatasetRequest) {
@@ -156,7 +249,7 @@ export type GenerateStreamEvent =
       severity?: string;
       preview: string;
     }
-  | ({ type: "done" } & GenerateDatasetResponse)
+  | ({ type: "done"; preview?: boolean; rows?: DatasetRow[] } & GenerateDatasetResponse)
   | { type: "error"; error: string; detail?: string; sampleErrors?: string[] };
 
 /**
