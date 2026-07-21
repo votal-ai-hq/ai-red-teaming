@@ -45,7 +45,20 @@ async function main(): Promise<void> {
   }
 
   const raw = JSON.parse(readFileSync(datasetAbs, "utf-8"));
-  const { valid, errors } = validateQualityRows(Array.isArray(raw) ? raw : []);
+  const rows = Array.isArray(raw) ? raw : [];
+  // Datasets may carry user-defined custom focus tasks. A quality row's `task`
+  // is a report label the scorer buckets by (grading keys off `metric`), so
+  // allow whatever task labels the dataset already carries — otherwise a
+  // custom-task dataset would have every row rejected here. `metric` still
+  // validates strictly inside validateQualityRows.
+  const allowedTasks = rows
+    .map((r) =>
+      r && typeof r === "object"
+        ? String((r as Record<string, unknown>).task ?? "").trim()
+        : "",
+    )
+    .filter(Boolean);
+  const { valid, errors } = validateQualityRows(rows, { allowedTasks });
   if (errors.length > 0) {
     console.error(`[eval] ${errors.length} invalid quality row(s) skipped:`);
     for (const e of errors.slice(0, 10)) console.error(`  - ${e}`);
