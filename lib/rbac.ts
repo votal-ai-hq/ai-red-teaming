@@ -82,6 +82,11 @@ const PERMISSIONS: RoutePermission[] = [
   { method: "GET", pattern: /^\/api\/datasets$/, roles: ["admin", "viewer"] },
   {
     method: "GET",
+    pattern: /^\/api\/datasets\/rows$/,
+    roles: ["admin", "viewer"],
+  },
+  {
+    method: "GET",
     pattern: /^\/api\/datasets\/providers$/,
     roles: ["admin", "viewer"],
   },
