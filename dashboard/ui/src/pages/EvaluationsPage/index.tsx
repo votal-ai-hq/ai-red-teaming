@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
-import { listDatasets, type DatasetSummary } from "@/api/datasets";
+import {
+  listDatasets,
+  listQualityReports,
+  getQualityReport,
+  type DatasetSummary,
+  type QualityReportMeta,
+  type QualityEvalReport,
+} from "@/api/datasets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +24,11 @@ import {
   ListChecks,
   ArrowRight,
   Database,
+  Loader2,
+  ChevronRight,
+  ChevronDown,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 
 type Status = "live" | "cli" | "planned";
@@ -190,6 +202,173 @@ function EvalCard({ e, hue }: { e: EvalType; hue: string }) {
 const SEC = "var(--eval-sec, #e05365)";
 const QUAL = "var(--eval-qual, #12a594)";
 
+/** Score change vs the previous run of the SAME dataset (regression signal). */
+function scoreDelta(reports: QualityReportMeta[], idx: number): number | null {
+  const r = reports[idx];
+  for (let j = idx + 1; j < reports.length; j++) {
+    if (reports[j].dataset === r.dataset) return r.score - reports[j].score;
+  }
+  return null;
+}
+
+function shortName(path: string): string {
+  return path.split("/").slice(-2).join("/").replace(/\.json$/i, "") || path;
+}
+
+function QualityRunRow({
+  meta,
+  delta,
+}: {
+  meta: QualityReportMeta;
+  delta: number | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [report, setReport] = useState<QualityEvalReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !report) {
+      setLoading(true);
+      try {
+        const r = await getQualityReport(meta.filename);
+        setReport(r.report);
+      } catch {
+        /* ignore */
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-center gap-3 p-3 text-left"
+      >
+        {open ? (
+          <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="w-4 h-4 shrink-0 text-muted-foreground" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">{shortName(meta.dataset)}</span>
+            <Badge variant="outline" className="text-[10px]">
+              {meta.targetUrl || "unknown target"}
+            </Badge>
+          </div>
+          <span className="text-[11px] text-muted-foreground">
+            {new Date(meta.timestamp).toLocaleString()}
+          </span>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {delta !== null && delta !== 0 && (
+            <span
+              className={`flex items-center gap-0.5 text-[11px] ${delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}
+            >
+              {delta > 0 ? (
+                <TrendingUp className="w-3 h-3" />
+              ) : (
+                <TrendingDown className="w-3 h-3" />
+              )}
+              {delta > 0 ? "+" : ""}
+              {delta}
+            </span>
+          )}
+          <span className="text-sm font-semibold tabular-nums">{meta.score}%</span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {meta.passed}/{meta.total}
+            {meta.errors > 0 && (
+              <span className="text-destructive"> · {meta.errors} err</span>
+            )}
+          </span>
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-border p-3 space-y-2">
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
+            </div>
+          )}
+          {report && (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(report.summary.byMetric).map(([m, v]) => (
+                  <span
+                    key={m}
+                    className="text-[11px] rounded border border-border px-1.5 py-0.5"
+                  >
+                    {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
+                  </span>
+                ))}
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {(report.results as { metric: string; score: number; pass: boolean; error?: string }[])
+                  .slice(0, 50)
+                  .map((r, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <span
+                        className={
+                          r.error
+                            ? "text-amber-600 dark:text-amber-400"
+                            : r.pass
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-destructive"
+                        }
+                      >
+                        {r.error ? "ERR" : r.pass ? "PASS" : "FAIL"}
+                      </span>
+                      <span className="text-muted-foreground">{r.metric}</span>
+                      <span className="tabular-nums">{r.score.toFixed(2)}</span>
+                    </div>
+                  ))}
+                {report.results.length > 50 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Showing first 50 of {report.results.length} rows.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QualityRunsSection() {
+  const [reports, setReports] = useState<QualityReportMeta[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    listQualityReports()
+      .then((r) => setReports(r.reports))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+  if (loading || reports.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          Recent quality evals
+        </h2>
+        <span className="text-[11px] text-muted-foreground">
+          {reports.length} run{reports.length === 1 ? "" : "s"} · newest first ·
+          ▲/▼ vs the previous run of the same dataset
+        </span>
+      </div>
+      <div className="space-y-2">
+        {reports.map((r, i) => (
+          <QualityRunRow key={r.id} meta={r} delta={scoreDelta(reports, i)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function EvaluationsPage() {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   useEffect(() => {
@@ -215,6 +394,9 @@ export function EvaluationsPage() {
           </p>
         </div>
       </div>
+
+      {/* Live: persisted quality-eval runs (score-over-time) */}
+      <QualityRunsSection />
 
       {/* Two axes */}
       <div className="grid gap-4 md:grid-cols-2">
