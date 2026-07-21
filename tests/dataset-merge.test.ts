@@ -49,4 +49,20 @@ describe("mergeDatasets (append / top-up)", () => {
     expect(res.valid).toHaveLength(2);
     expect(res.added).toBe(1);
   });
+
+  it("preserves existing custom-task rows on a top-up (auto allow-list)", () => {
+    // A row saved earlier with a custom task label.
+    const existing = [
+      { ...qrow("what is your refund window?"), task: "refund_policy_qa" },
+    ];
+    // New rows carry the same custom task; caller passes it as allowed.
+    const incoming = [
+      { ...qrow("how long to get a refund?"), task: "refund_policy_qa" },
+    ];
+    const res = mergeDatasets("quality", existing, incoming, {
+      allowedTasks: ["refund_policy_qa"],
+    });
+    expect(res.valid).toHaveLength(2); // existing custom-task row survives
+    expect(res.added).toBe(1);
+  });
 });

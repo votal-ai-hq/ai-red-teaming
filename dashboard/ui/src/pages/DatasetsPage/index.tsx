@@ -400,6 +400,10 @@ export function DatasetsPage() {
   const [taxonomy, setTaxonomy] = useState<DatasetTaxonomy | null>(null);
   const [selCategories, setSelCategories] = useState<string[]>([]);
   const [selSeverities, setSelSeverities] = useState<string[]>([]);
+  // User-defined focus tasks (quality datasets only — a quality row's task is a
+  // report label, so custom ones are safe; security categories stay fixed).
+  const [customTasks, setCustomTasks] = useState<string[]>([]);
+  const [taskDraft, setTaskDraft] = useState("");
   // Curate-before-save: generate into a review list, keep the good rows.
   const [reviewMode, setReviewMode] = useState(false);
   const [curate, setCurate] = useState<
@@ -465,7 +469,35 @@ export function DatasetsPage() {
       .catch(() => setTaxonomy(null));
     setSelCategories([]);
     setSelSeverities([]);
+    setCustomTasks([]);
+    setTaskDraft("");
   }, [kind, family]);
+
+  // Add the current draft (or comma-separated drafts) as custom focus tasks.
+  const addCustomTasks = (raw: string) => {
+    const slugs = raw
+      .split(",")
+      .map((s) =>
+        s
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 40)
+          .replace(/_+$/g, ""),
+      )
+      .filter(Boolean);
+    if (!slugs.length) return;
+    const taxonomyTasks = new Set(taxonomy?.tasks ?? []);
+    setCustomTasks((prev) => {
+      const next = [...prev];
+      for (const s of slugs) {
+        if (!taxonomyTasks.has(s) && !next.includes(s)) next.push(s);
+      }
+      return next;
+    });
+    setTaskDraft("");
+  };
 
   // Live cost estimate — debounced so typing in the count field doesn't spam
   // the endpoint. Cleared on unmount / dependency change.
@@ -588,7 +620,9 @@ export function DatasetsPage() {
       ...(append && !isPreview ? { append: true } : {}),
       ...(kind === "security" && selCategories.length ? { categories: selCategories } : {}),
       ...(kind === "security" && selSeverities.length ? { severities: selSeverities } : {}),
-      ...(kind === "quality" && selCategories.length ? { tasks: selCategories } : {}),
+      ...(kind === "quality" && (selCategories.length || customTasks.length)
+        ? { tasks: [...selCategories, ...customTasks] }
+        : {}),
       ...(kind === "quality" && selSeverities.length ? { metrics: selSeverities } : {}),
       ...(seedConfigPath.trim() ? { seedConfigPath: seedConfigPath.trim() } : {}),
     };
@@ -929,7 +963,9 @@ export function DatasetsPage() {
                   <div className="space-y-1">
                     <span className="text-[11px] text-muted-foreground">
                       {primaryLabel}
-                      {selCategories.length ? ` (${selCategories.length} selected)` : " (all)"}
+                      {selCategories.length || customTasks.length
+                        ? ` (${selCategories.length + customTasks.length} selected)`
+                        : " (all)"}
                     </span>
                     <div className="flex flex-wrap gap-1">
                       {primary.map((c) => (
@@ -946,7 +982,58 @@ export function DatasetsPage() {
                           </Badge>
                         </button>
                       ))}
+                      {kind === "quality" &&
+                        customTasks.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            title="Remove custom task"
+                            onClick={() =>
+                              setCustomTasks((prev) => prev.filter((t) => t !== c))
+                            }
+                          >
+                            <Badge
+                              variant="default"
+                              className="cursor-pointer text-[10px] gap-0.5"
+                            >
+                              {c}
+                              <span className="opacity-70">×</span>
+                            </Badge>
+                          </button>
+                        ))}
                     </div>
+                    {kind === "quality" && (
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <Input
+                          className="h-7 text-xs max-w-64"
+                          placeholder="Add your own task, e.g. refund_policy_qa — Enter"
+                          value={taskDraft}
+                          onChange={(e) => setTaskDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === ",") {
+                              e.preventDefault();
+                              addCustomTasks(taskDraft);
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          disabled={!taskDraft.trim()}
+                          onClick={() => addCustomTasks(taskDraft)}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    )}
+                    {kind === "quality" && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Custom tasks let you focus a functional/agent eval on your
+                        own scenarios. (Security categories are fixed — the
+                        red-team engine routes on them.)
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <span className="text-[11px] text-muted-foreground">
