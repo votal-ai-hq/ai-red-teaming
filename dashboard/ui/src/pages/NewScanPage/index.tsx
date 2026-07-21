@@ -638,7 +638,11 @@ export default function NewScanPage() {
     setError(null);
     setSuccess(null);
 
-    if (!targetReady) {
+    // When reusing a previous scan's target (quality eval), the form's target
+    // fields are ignored — its config comes from the saved run — so skip the
+    // "target base URL required" guard.
+    const usingPreviousTarget = mode === "quality" && targetSource === "previous";
+    if (!usingPreviousTarget && !targetReady) {
       setError(
         targetType === "mcp"
           ? mcpTransport === "streamable_http"
