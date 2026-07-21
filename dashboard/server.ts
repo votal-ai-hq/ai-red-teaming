@@ -1845,6 +1845,8 @@ const server = createServer(
           backend?: string;
           /** Stream row-by-row NDJSON progress (direct engines only). */
           stream?: boolean;
+          /** Custom instructions injected into the generation prompt. */
+          instructions?: string;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1878,6 +1880,10 @@ const server = createServer(
           readFileSync(presetAbs, "utf-8"),
         ) as DatasetPreset;
         if (body.count) preset.count = body.count;
+        if (typeof body.instructions === "string" && body.instructions.trim()) {
+          // Cap so a runaway paste can't dominate the generation prompt.
+          preset.customInstructions = body.instructions.trim().slice(0, 4000);
+        }
         if (body.turnMode === "single" || body.turnMode === "multi") {
           preset.turnMode = body.turnMode;
         }

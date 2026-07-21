@@ -75,6 +75,12 @@ export interface DatasetPreset {
   turnMode?: "single" | "multi";
   /** Max conversation turns when turnMode="multi" (clamped to 2..8). Default 3. */
   maxTurns?: number;
+  /**
+   * Operator-supplied custom instructions injected into the generation prompt —
+   * the lever for iterating on a dataset's style/content without editing rows.
+   * Refines how each case is written; the output-format contract is preserved.
+   */
+  customInstructions?: string;
   /** Total rows to generate. */
   count?: number;
   /** Minimum rows per category (balance floor). */

@@ -20,6 +20,7 @@ import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -322,6 +323,8 @@ export function DatasetsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [turnMode, setTurnMode] = useState<"single" | "multi">("single");
   const [maxTurns, setMaxTurns] = useState(3);
+  // Custom instructions injected into the generation prompt — the iterate lever.
+  const [instructions, setInstructions] = useState("");
   // Generation engine: a direct LLM engine id, or "data-designer". Default is
   // OpenAI (the direct path — no NeMo service required).
   const [engines, setEngines] = useState<GenerationEngine[]>(FALLBACK_ENGINES);
@@ -443,6 +446,7 @@ export function DatasetsPage() {
       ...(model.trim() ? { generationModel: model.trim() } : {}),
       ...(profileId ? { profileId } : {}),
       ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
+      ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
       ...(seedConfigPath.trim() ? { seedConfigPath: seedConfigPath.trim() } : {}),
     };
     try {
@@ -697,6 +701,28 @@ export function DatasetsPage() {
               generation with {effInfo.label} will fail until it is.
             </p>
           )}
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="instructions">
+              Custom instructions (optional) — iterate on the generation prompt
+            </Label>
+            <Textarea
+              id="instructions"
+              className="w-full min-h-16 text-xs"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder={
+                kind === "security"
+                  ? "e.g. Make the attacks subtle and conversational; target the checkout/payment flow; use British English; avoid obvious jailbreak phrasing."
+                  : "e.g. Write terse, realistic support questions; assume the user is non-technical; focus on refund and shipping scenarios."
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Injected into the generation prompt to steer style and content, then
+              regenerate. The output format and grading contract are preserved.
+              Tweak these and hit Generate again to iterate.
+            </p>
+          </div>
+
           <div className="space-y-1 rounded-lg border border-dashed border-border p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <Label className="text-xs flex items-center gap-1.5">

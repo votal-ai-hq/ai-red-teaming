@@ -31,7 +31,18 @@ function contextPreamble(context?: string): string {
   ].join("\n");
 }
 
-function inputTemplate(context?: string): string {
+/** Operator-supplied custom instructions block (see nemo-config-builder). */
+function instructionsBlock(instructions?: string): string {
+  if (!instructions || !instructions.trim()) return "";
+  return [
+    "",
+    "OPERATOR INSTRUCTIONS (follow these closely; they refine how to write the case):",
+    instructions.trim(),
+    "",
+  ].join("\n");
+}
+
+function inputTemplate(context?: string, instructions?: string): string {
   return [
     "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
     "legitimate task the agent should handle correctly (not an attack).",
@@ -40,14 +51,14 @@ function inputTemplate(context?: string): string {
     "Graded on metric: {{metric}}",
     "Acting as: {{role}}",
     "Available surface: {{surface}}",
-    "",
+    instructionsBlock(instructions),
     "Write one realistic user request for this task, specific to the target",
     "application's domain and tools when context is given. Output ONLY the",
     "user's message — concrete and specific, no preamble.",
   ].join("\n");
 }
 
-function multiTurnInputTemplate(context?: string): string {
+function multiTurnInputTemplate(context?: string, instructions?: string): string {
   return [
     "You are authoring a MULTI-TURN FUNCTIONAL evaluation case for an AI agent —",
     "a legitimate {{turns}}-message task conversation (not an attack) where each",
@@ -57,7 +68,7 @@ function multiTurnInputTemplate(context?: string): string {
     "Graded on metric: {{metric}}",
     "Acting as: {{role}}",
     "Available surface: {{surface}}",
-    "",
+    instructionsBlock(instructions),
     "Write a realistic conversation where the user completes this task across",
     "turns — e.g. an initial request, then a refinement, added detail, or a",
     "follow-up that depends on the earlier turns (testing context retention).",
@@ -130,8 +141,8 @@ export function buildQualityDataDesignerConfig(
     name: "input",
     modelAlias,
     prompt: multiTurn
-      ? multiTurnInputTemplate(seeds?.context)
-      : inputTemplate(seeds?.context),
+      ? multiTurnInputTemplate(seeds?.context, preset.customInstructions)
+      : inputTemplate(seeds?.context, preset.customInstructions),
   };
 
   const refCol: LlmStructuredColumn = {

@@ -149,6 +149,27 @@ describe("buildDataDesignerConfig", () => {
     expect(hiTurns && "values" in hiTurns && (hiTurns.values as string[]).length).toBe(7);
   });
 
+  it("injects custom operator instructions into prompt + input templates", () => {
+    const sec = buildDataDesignerConfig({
+      family: "mcp",
+      count: 3,
+      customInstructions: "Use British English and target the checkout flow.",
+    });
+    const promptCol = sec.columns.find((c) => c.name === "prompt");
+    const text = promptCol && "prompt" in promptCol ? promptCol.prompt : "";
+    expect(text).toContain("OPERATOR INSTRUCTIONS");
+    expect(text).toContain("target the checkout flow");
+    // The output-format contract stays last so instructions can't override it.
+    expect(text.trim().endsWith("no explanation.")).toBe(true);
+
+    // no instructions → no operator block
+    const plain = buildDataDesignerConfig({ family: "mcp", count: 3 });
+    const plainCol = plain.columns.find((c) => c.name === "prompt");
+    expect(
+      plainCol && "prompt" in plainCol && plainCol.prompt,
+    ).not.toContain("OPERATOR INSTRUCTIONS");
+  });
+
   it("defaults to the nim provider", () => {
     const config = buildDataDesignerConfig({ family: "mcp" });
     expect(config.modelProvider).toBe("nim");

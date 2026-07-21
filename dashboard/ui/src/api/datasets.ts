@@ -29,6 +29,8 @@ export interface GenerateDatasetRequest {
   /** Generation engine: a direct LLM engine id (openai | anthropic | openrouter
    *  | ollama) or "data-designer". Defaults to "openai". */
   backend?: string;
+  /** Custom instructions injected into the generation prompt (iterate lever). */
+  instructions?: string;
 }
 
 export interface GenerationProvider {
