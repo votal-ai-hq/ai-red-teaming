@@ -1773,23 +1773,41 @@ const server = createServer(
         const repoRoot = join(import.meta.dirname, "..");
         const body = JSON.parse(await readBody(req)) as {
           config?: unknown;
+          /** Reuse a previous scan's target: load its saved config server-side
+           *  (so auth secrets never round-trip through the browser). */
+          fromRunId?: string;
           dataset?: string;
           threshold?: number;
           concurrency?: number;
         };
-        // Load + validate the target config (same shape the New Scan form emits).
+        // Resolve the target config: either a previous run's saved config
+        // (loaded server-side) or an inline config from the form.
         let config: Config;
-        try {
-          config = loadConfigFromObject(body.config);
-        } catch (err) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              error: "Invalid configuration",
-              detail: formatErrorDetails(err),
-            }),
-          );
-          return;
+        if (body.fromRunId) {
+          const loaded = await loadRunConfig(String(body.fromRunId), ctx?.tenantId);
+          if (!loaded) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: `previous scan config not found: ${body.fromRunId}`,
+              }),
+            );
+            return;
+          }
+          config = loaded;
+        } else {
+          try {
+            config = loadConfigFromObject(body.config);
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "Invalid configuration",
+                detail: formatErrorDetails(err),
+              }),
+            );
+            return;
+          }
         }
         // Never run an MCP stdio target on a shared instance unless enabled.
         if (rejectMcpStdioIfDisabled(config, res)) return;

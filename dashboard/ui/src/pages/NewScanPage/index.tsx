@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router";
-import { createRun } from "@/api/runs";
+import { createRun, getRuns } from "@/api/runs";
+import type { RunMeta } from "@/api/types";
 import { getReference, discoverMcp } from "@/api/reference";
 import { apiFetch } from "@/api/client";
 import {
@@ -311,6 +312,11 @@ export default function NewScanPage() {
   const [datasetFile, setDatasetFile] = useState(deepLinkDataset);
   const [datasetOnly, setDatasetOnly] = useState(false);
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([]);
+  // Quality-eval target source: a freshly-configured target ("new") or the
+  // saved target of a previous scan ("previous", run as-is).
+  const [targetSource, setTargetSource] = useState<"new" | "previous">("new");
+  const [previousRunId, setPreviousRunId] = useState("");
+  const [previousRuns, setPreviousRuns] = useState<RunMeta[]>([]);
   // Quality-eval knobs + live streaming state.
   const [evalThreshold, setEvalThreshold] = useState(0.7);
   const [evalRunning, setEvalRunning] = useState(false);
@@ -340,6 +346,10 @@ export default function NewScanPage() {
       .finally(() => setRefLoading(false));
     listDatasets()
       .then((r) => setAvailableDatasets(r.datasets))
+      .catch(() => {});
+    // Recent runs — used to reuse a previous scan's target in quality-eval mode.
+    getRuns()
+      .then((rs) => setPreviousRuns(rs.filter((r) => r.targetUrl)))
       .catch(() => {});
   }, []);
 
@@ -646,14 +656,21 @@ export default function NewScanPage() {
         setError("Pick a quality dataset to evaluate.");
         return;
       }
+      if (targetSource === "previous" && !previousRunId) {
+        setError("Pick a previous scan whose target to reuse.");
+        return;
+      }
       setEvalRunning(true);
       setEvalReport(null);
       setEvalTail([]);
       setEvalProgress(null);
       try {
-        const config = buildConfig();
+        const req =
+          targetSource === "previous"
+            ? { fromRunId: previousRunId, dataset: datasetFile.trim(), threshold: evalThreshold }
+            : { config: buildConfig(), dataset: datasetFile.trim(), threshold: evalThreshold };
         await evalQualityStream(
-          { config, dataset: datasetFile.trim(), threshold: evalThreshold },
+          req,
           (ev) => {
             if (ev.type === "start")
               setEvalProgress({ done: 0, total: ev.total });
@@ -820,9 +837,64 @@ export default function NewScanPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-2">
             {mode === "quality"
-              ? "Score a quality dataset for correctness against the target below. Attack/template settings are ignored in this mode."
+              ? "Score a quality dataset for correctness against a target. Attack/template/policy settings are ignored in this mode."
               : "Run the red-team attack suite against the target."}
           </p>
+
+          {/* Quality eval: target source — a new target or a previous scan's. */}
+          {mode === "quality" && (
+            <div className="mt-3 rounded-lg border border-border p-3 space-y-2">
+              <span className="text-xs font-medium">Target</span>
+              <div className="inline-flex rounded-lg border border-border p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setTargetSource("new")}
+                  className={`px-3 py-1 rounded-md text-xs ${targetSource === "new" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Configure new target
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargetSource("previous")}
+                  className={`px-3 py-1 rounded-md text-xs ${targetSource === "previous" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Reuse a previous scan
+                </button>
+              </div>
+              {targetSource === "previous" ? (
+                previousRuns.length > 0 ? (
+                  <div className="space-y-1">
+                    <select
+                      value={previousRunId}
+                      onChange={(e) => setPreviousRunId(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">Select a previous scan…</option>
+                      {previousRuns.map((r) => (
+                        <option key={r.runId} value={r.runId}>
+                          {(r.targetUrl || "unknown target")} —{" "}
+                          {new Date(r.startedAt).toLocaleString()}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground">
+                      Runs the eval against that scan's saved target (URL + auth) —
+                      the target fields below are ignored.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    No previous scans found — configure a new target instead, or run
+                    a scan first.
+                  </p>
+                )
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Fill in the target section below (URL / auth / schema).
+                </p>
+              )}
+            </div>
+          )}
         </section>
 
         {/* ═══ Step 1: Template ═══ */}
@@ -2032,7 +2104,9 @@ export default function NewScanPage() {
           type="submit"
           disabled={
             mode === "quality"
-              ? evalRunning || !targetReady || !datasetFile.trim()
+              ? evalRunning ||
+                !datasetFile.trim() ||
+                (targetSource === "new" ? !targetReady : !previousRunId)
               : submitting || !targetReady
           }
           className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.99]"

@@ -322,7 +322,10 @@ export type EvalQualityStreamEvent =
   | { type: "error"; error: string; detail?: string };
 
 export interface EvalQualityRequest {
-  config: Record<string, unknown>;
+  /** Inline target config (new target). Omit when reusing a previous scan. */
+  config?: Record<string, unknown>;
+  /** Reuse a previous scan's target: its saved config is loaded server-side. */
+  fromRunId?: string;
   dataset: string;
   threshold?: number;
   concurrency?: number;
