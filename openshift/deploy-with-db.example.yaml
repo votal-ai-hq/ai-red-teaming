@@ -75,6 +75,20 @@ spec:
       storage: 2Gi
 
 ---
+# PVC: Generated eval datasets (persisted across restarts).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: red-team-datasets
+  labels:
+    app.kubernetes.io/part-of: red-team-ai
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+
+---
 # ── Postgres Deployment ──
 apiVersion: apps/v1
 kind: Deployment
@@ -235,6 +249,8 @@ spec:
               mountPath: /app/report
             - name: guardrail-reports
               mountPath: /app/reports
+            - name: datasets
+              mountPath: /app/data/datasets
           livenessProbe:
             httpGet:
               path: /
@@ -261,6 +277,9 @@ spec:
         - name: guardrail-reports
           persistentVolumeClaim:
             claimName: red-team-guardrail-reports
+        - name: datasets
+          persistentVolumeClaim:
+            claimName: red-team-datasets
 
 ---
 # Dashboard Service

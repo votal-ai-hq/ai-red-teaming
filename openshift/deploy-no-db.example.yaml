@@ -17,7 +17,21 @@ stringData:
   SIMPLE_AUTH_SESSION_SECRET: "replace-this"
   SIMPLE_AUTH_PASSWORD: "changeme"
 ---
-# Red Team Dashboard (no Postgres, emptyDir volumes)
+# PVC: Generated eval datasets (must persist across restarts, unlike the
+# emptyDir report volumes below).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: red-team-datasets
+  labels:
+    app.kubernetes.io/part-of: red-team-ai
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Red Team Dashboard (no Postgres, emptyDir volumes for reports)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,6 +99,8 @@ spec:
               mountPath: /app/report
             - name: guardrail-reports
               mountPath: /app/reports
+            - name: datasets
+              mountPath: /app/data/datasets
           livenessProbe:
             httpGet:
               path: /
@@ -111,6 +127,9 @@ spec:
         - name: guardrail-reports
           emptyDir:
             sizeLimit: 100G
+        - name: datasets
+          persistentVolumeClaim:
+            claimName: red-team-datasets
 ---
 apiVersion: v1
 kind: Service

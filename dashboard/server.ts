@@ -83,6 +83,12 @@ import {
 import { estimateCost } from "../lib/dataset/cost-estimate.js";
 import { runQualityEval } from "../lib/quality/scorer.js";
 import {
+  listDatasetsStore,
+  readDatasetRowsStore,
+  datasetExistsStore,
+  saveDatasetStore,
+} from "../lib/dataset/dataset-store.js";
+import {
   exportDataset,
   exportContentType,
   isExportFormat,
@@ -1634,19 +1640,14 @@ const server = createServer(
           return;
         }
 
-        let existing: DatasetRow[] = [];
-        if (existsSync(outAbs)) {
-          try {
-            const raw = JSON.parse(readFileSync(outAbs, "utf-8"));
-            if (Array.isArray(raw)) existing = raw as DatasetRow[];
-          } catch {
-            /* treat unreadable as empty; we overwrite with a valid array */
-          }
-        }
+        const tenant = ctx?.tenantId ?? "";
+        const existingRaw = await readDatasetRowsStore(tenant, out);
+        const existing = Array.isArray(existingRaw)
+          ? (existingRaw as DatasetRow[])
+          : [];
         const { rows, added } = appendRow(existing, valid[0]);
         if (added) {
-          mkdirSync(dirname(outAbs), { recursive: true });
-          writeFileSync(outAbs, JSON.stringify(rows, null, 2) + "\n", "utf-8");
+          await saveDatasetStore(tenant, out, rows);
         }
         res.writeHead(added ? 201 : 200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ out, added, rowCount: rows.length }));
@@ -1660,7 +1661,7 @@ const server = createServer(
     // API: list generated eval datasets (data/datasets/**) with stats
     if (url.pathname === "/api/datasets" && req.method === "GET") {
       try {
-        const datasets = listDatasets(join(import.meta.dirname, ".."));
+        const datasets = await listDatasetsStore(ctx?.tenantId ?? "");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ datasets }));
       } catch (err) {
@@ -1727,28 +1728,23 @@ const server = createServer(
           );
           return;
         }
-        // Top-up: merge into the existing file, deduping across both sets.
+        // Top-up: merge into the existing dataset, deduping across both sets.
+        const tenant = ctx?.tenantId ?? "";
         let valid: unknown[] = gen.valid;
         let histogram = gen.histogram;
         let duplicatesDropped = gen.duplicatesDropped;
         let added = gen.valid.length;
-        const append = body.append === true && existsSync(outAbs);
+        const append =
+          body.append === true && (await datasetExistsStore(tenant, body.out));
         if (append) {
-          let existingRows: unknown[] = [];
-          try {
-            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
-            if (Array.isArray(parsed)) existingRows = parsed;
-          } catch {
-            /* unreadable existing file — treat as fresh write */
-          }
+          const existingRows = (await readDatasetRowsStore(tenant, body.out)) ?? [];
           const merged = mergeDatasets(kind, existingRows, gen.valid, { allowedTasks });
           added = merged.added;
           duplicatesDropped += gen.valid.length - merged.added;
           valid = merged.valid;
           histogram = merged.histogram;
         }
-        mkdirSync(dirname(outAbs), { recursive: true });
-        writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+        await saveDatasetStore(tenant, body.out, valid);
         res.writeHead(201, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
@@ -1811,13 +1807,12 @@ const server = createServer(
           );
           return;
         }
-        if (!existsSync(abs)) {
+        const rawRows = await readDatasetRowsStore(ctx?.tenantId ?? "", rel);
+        if (rawRows === null) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
           return;
         }
-        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
-        const rawRows = Array.isArray(parsed) ? parsed : [];
         // Allow the dataset's own (possibly custom) task labels; metric stays
         // strict (the scorer grades on it).
         const allowedTasks = rawRows
@@ -1921,7 +1916,7 @@ const server = createServer(
           1000,
         );
         const abs = resolvePath(repoRoot, rel);
-        // Contain reads to data/datasets and to .json files only.
+        // Contain reads to data/datasets and to .json files only (the logical key).
         if (
           !abs.startsWith(join(repoRoot, "data", "datasets")) ||
           !abs.endsWith(".json")
@@ -1932,13 +1927,12 @@ const server = createServer(
           );
           return;
         }
-        if (!existsSync(abs)) {
+        const all = await readDatasetRowsStore(ctx?.tenantId ?? "", rel);
+        if (all === null) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
           return;
         }
-        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
-        const all = Array.isArray(parsed) ? parsed : [];
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({ path: rel, total: all.length, rows: all.slice(0, limit) }),
@@ -1973,13 +1967,12 @@ const server = createServer(
           );
           return;
         }
-        if (!existsSync(abs)) {
+        const all = await readDatasetRowsStore(ctx?.tenantId ?? "", rel);
+        if (all === null) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
           return;
         }
-        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
-        const all = Array.isArray(parsed) ? parsed : [];
         const body = exportDataset(all, format);
         const base = basename(abs).replace(/\.json$/, "");
         res.writeHead(200, {
@@ -2461,19 +2454,17 @@ const server = createServer(
           return;
         }
 
-        // Preview/curate mode: return the rows for review instead of writing.
+        // Preview/curate mode: return the rows for review instead of persisting.
         const preview = body.preview === true;
-        // Top-up: merge into the existing file, deduping across both sets.
-        const append = body.append === true && !preview && existsSync(outAbs);
+        const tenant = ctx?.tenantId ?? "";
+        // Top-up: merge into the existing dataset, deduping across both sets.
+        const append =
+          body.append === true &&
+          !preview &&
+          (await datasetExistsStore(tenant, body.out));
         let addedCount = valid.length;
         if (append) {
-          let existingRows: unknown[] = [];
-          try {
-            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
-            if (Array.isArray(parsed)) existingRows = parsed;
-          } catch {
-            /* unreadable existing file — treat as fresh write */
-          }
+          const existingRows = (await readDatasetRowsStore(tenant, body.out)) ?? [];
           const merged = mergeDatasets(kind, existingRows, valid, { allowedTasks });
           addedCount = merged.added;
           duplicatesDropped += valid.length - merged.added;
@@ -2481,8 +2472,7 @@ const server = createServer(
           histogram = merged.histogram;
         }
         if (!preview) {
-          mkdirSync(dirname(outAbs), { recursive: true });
-          writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
+          await saveDatasetStore(tenant, body.out, valid);
         }
 
         const result = {
