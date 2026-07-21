@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   listDatasets,
   generateDataset,
+  generateDatasetStream,
   listEvalRuns,
   listGenerationProviders,
   listProfiles,
@@ -162,6 +163,13 @@ export function DatasetsPage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  // Live streaming progress (OpenAI-direct).
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const [liveRows, setLiveRows] = useState<
+    { category: string; severity?: string; preview: string }[]
+  >([]);
 
   const refresh = async () => {
     setLoading(true);
@@ -215,41 +223,72 @@ export function DatasetsPage() {
     }
   };
 
+  const okMessage = (res: {
+    rowCount: number;
+    out: string;
+    duplicatesDropped: number;
+    seeds?: { roles: number; surfaces: number };
+    profile?: { name: string; tools: number; policies: number; rules: number };
+    turnMode?: "multi";
+    maxTurns?: number;
+  }) => {
+    const seedNote = res.seeds
+      ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
+      : "";
+    const profileNote = res.profile
+      ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.policies} policies, ${res.profile.rules} rules)`
+      : "";
+    const turnNote =
+      res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
+    return `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`;
+  };
+
   const onGenerate = async () => {
     setGenerating(true);
     setError(null);
     setOk(null);
+    setProgress(null);
+    setLiveRows([]);
+    const dir = kind === "quality" ? `quality-${family}` : `nemo-${family}`;
+    const body = {
+      preset: PRESETS[`${kind}-${family}`],
+      out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
+      count,
+      backend,
+      provider: backend === "openai" ? "openai" : providerId,
+      ...(model.trim() ? { generationModel: model.trim() } : {}),
+      ...(profileId ? { profileId } : {}),
+      ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
+      ...(seedConfigPath.trim() ? { seedConfigPath: seedConfigPath.trim() } : {}),
+    };
     try {
-      const dir = kind === "quality" ? `quality-${family}` : `nemo-${family}`;
-      const res = await generateDataset({
-        preset: PRESETS[`${kind}-${family}`],
-        out: `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`,
-        count,
-        backend,
-        provider: backend === "openai" ? "openai" : providerId,
-        ...(model.trim() ? { generationModel: model.trim() } : {}),
-        ...(profileId ? { profileId } : {}),
-        ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
-        ...(seedConfigPath.trim()
-          ? { seedConfigPath: seedConfigPath.trim() }
-          : {}),
-      });
-      const seedNote = res.seeds
-        ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
-        : "";
-      const profileNote = res.profile
-        ? ` — tailored to "${res.profile.name}" (${res.profile.tools} tools, ${res.profile.policies} policies, ${res.profile.rules} rules)`
-        : "";
-      const turnNote =
-        res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
-      setOk(
-        `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`,
-      );
+      if (backend === "openai") {
+        // Stream row-by-row so results appear as they're generated.
+        let done = 0;
+        await generateDatasetStream(body, (e) => {
+          if (e.type === "start") setProgress({ done: 0, total: e.total });
+          else if (e.type === "row") {
+            done += 1;
+            setProgress({ done, total: e.total });
+            setLiveRows((rows) =>
+              [
+                { category: e.category, severity: e.severity, preview: e.preview },
+                ...rows,
+              ].slice(0, 8),
+            );
+          } else if (e.type === "done") setOk(okMessage(e));
+          else if (e.type === "error")
+            setError(`${e.error}${e.detail ? ` — ${e.detail}` : ""}`);
+        });
+      } else {
+        setOk(okMessage(await generateDataset(body)));
+      }
       await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setGenerating(false);
+      setProgress(null);
     }
   };
 
@@ -543,6 +582,45 @@ export function DatasetsPage() {
               </>
             )}
           </p>
+
+          {progress && (
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 text-foreground">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                  Generating with OpenAI…
+                </span>
+                <span className="font-mono text-muted-foreground">
+                  {progress.done} / {progress.total}
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{
+                    width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+              {liveRows.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {liveRows.map((r, i) => (
+                    <div
+                      key={`${progress.done}-${i}`}
+                      className="flex items-start gap-2 text-[11px] animate-in fade-in slide-in-from-top-1"
+                    >
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        {r.category}
+                      </Badge>
+                      <span className="text-muted-foreground truncate">
+                        {r.preview}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {error && (
             <Alert variant="destructive">

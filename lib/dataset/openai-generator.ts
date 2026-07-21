@@ -44,6 +44,8 @@ export interface OpenAiGeneratorOptions {
   concurrency?: number;
   /** Inject a chat implementation (tests / alternate providers). */
   chat?: ChatFn;
+  /** Called as each row completes (out of order) — for live streaming. */
+  onRow?: (record: NemoRecord, index: number, total: number) => void;
   signal?: AbortSignal;
 }
 
@@ -181,6 +183,8 @@ export async function generateWithOpenAI(
     });
     const grading = parseJsonObject(structRaw);
 
-    return { ...sample, [structCol.name]: grading } as NemoRecord;
+    const record = { ...sample, [structCol.name]: grading } as NemoRecord;
+    opts.onRow?.(record, i, rows.length);
+    return record;
   });
 }

@@ -54,7 +54,12 @@ import {
   type ImportFormat,
 } from "../lib/dataset/profile-importers.js";
 import { mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
-import { recordsToRows, recordsToQualityRows } from "../lib/dataset/map-records.js";
+import {
+  recordsToRows,
+  recordsToQualityRows,
+  recordToRow,
+  recordToQualityRow,
+} from "../lib/dataset/map-records.js";
 import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
 import type { DatasetPreset, DatasetRow } from "../lib/dataset/types.js";
@@ -1746,6 +1751,7 @@ const server = createServer(
         res.end(JSON.stringify({ error: "Too many requests.", retryAfterSec }));
         return;
       }
+      let streamStarted = false;
       try {
         const repoRoot = join(import.meta.dirname, "..");
         const body = JSON.parse(await readBody(req)) as {
@@ -1765,6 +1771,8 @@ const server = createServer(
           maxTurns?: number;
           /** "data-designer" (default) or "openai" (call OpenAI directly). */
           backend?: "data-designer" | "openai";
+          /** Stream row-by-row NDJSON progress (OpenAI-direct only). */
+          stream?: boolean;
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1895,9 +1903,45 @@ const server = createServer(
         // service); "data-designer" (default) posts to the NeMo microservice.
         // Same config in, same records out — everything else is unchanged.
         const backend = body.backend === "openai" ? "openai" : "data-designer";
+
+        // Live streaming (OpenAI-direct only — Data Designer returns a batch).
+        // Emits NDJSON: {type:"row",...} per generated row, then a final
+        // {type:"done",...} or {type:"error",...}.
+        const streaming = backend === "openai" && body.stream === true;
+        if (streaming) {
+          res.writeHead(200, {
+            "Content-Type": "application/x-ndjson",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+          });
+          res.write(
+            JSON.stringify({ type: "start", total: preset.count ?? 300, backend }) + "\n",
+          );
+        }
+        streamStarted = streaming;
+
         let records;
         if (backend === "openai") {
-          records = await generateWithOpenAI(ddConfig, preset.count ?? 300);
+          records = await generateWithOpenAI(ddConfig, preset.count ?? 300, {
+            onRow: streaming
+              ? (rec, index, total) => {
+                  const row =
+                    kind === "quality"
+                      ? recordToQualityRow(rec)
+                      : recordToRow(rec, preset.family);
+                  res.write(
+                    JSON.stringify({
+                      type: "row",
+                      index,
+                      total,
+                      category: String(row.category ?? row.task ?? ""),
+                      severity: row.severity ? String(row.severity) : undefined,
+                      preview: String(row.prompt ?? row.input ?? "").slice(0, 160),
+                    }) + "\n",
+                  );
+                }
+              : undefined,
+          });
         } else {
           const client = new NemoDataDesignerClient();
           records = await client.generate(ddConfig, preset.count);
@@ -1908,38 +1952,63 @@ const server = createServer(
             : validateRows(recordsToRows(records, preset.family));
 
         if (errors.length > 0 || valid.length === 0) {
-          res.writeHead(422, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              error: "generation produced invalid or zero rows",
-              invalid: errors.length,
-              kept: valid.length,
-              sampleErrors: errors.slice(0, 10),
-            }),
-          );
+          const payload = {
+            error: "generation produced invalid or zero rows",
+            invalid: errors.length,
+            kept: valid.length,
+            sampleErrors: errors.slice(0, 10),
+          };
+          if (streaming) {
+            res.write(JSON.stringify({ type: "error", ...payload }) + "\n");
+            res.end();
+          } else {
+            res.writeHead(422, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(payload));
+          }
           return;
         }
 
         mkdirSync(dirname(outAbs), { recursive: true });
         writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
 
-        res.writeHead(201, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            out: body.out,
-            rowCount: valid.length,
-            duplicatesDropped,
-            histogram,
-            summary: formatHistogram(histogram),
-            backend,
-            ...(seedInfo ? { seeds: seedInfo } : {}),
-            ...(profileInfo ? { profile: profileInfo } : {}),
-            ...(preset.turnMode === "multi"
-              ? { turnMode: "multi", maxTurns: Math.min(8, Math.max(2, preset.maxTurns ?? 3)) }
-              : {}),
-          }),
-        );
+        const result = {
+          out: body.out,
+          rowCount: valid.length,
+          duplicatesDropped,
+          histogram,
+          summary: formatHistogram(histogram),
+          backend,
+          ...(seedInfo ? { seeds: seedInfo } : {}),
+          ...(profileInfo ? { profile: profileInfo } : {}),
+          ...(preset.turnMode === "multi"
+            ? { turnMode: "multi", maxTurns: Math.min(8, Math.max(2, preset.maxTurns ?? 3)) }
+            : {}),
+        };
+        if (streaming) {
+          res.write(JSON.stringify({ type: "done", ...result }) + "\n");
+          res.end();
+        } else {
+          res.writeHead(201, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        }
       } catch (err) {
+        // If the stream already started, headers are sent — emit an error event
+        // rather than trying to set a status code.
+        if (streamStarted) {
+          try {
+            res.write(
+              JSON.stringify({
+                type: "error",
+                error: "dataset generation failed",
+                detail: formatErrorDetails(err),
+              }) + "\n",
+            );
+          } catch {
+            /* client already gone */
+          }
+          res.end();
+          return;
+        }
         // Fail-soft messaging: Data Designer down / no creds is the common case.
         const ddUrl = process.env.NEMO_DATA_DESIGNER_URL;
         res.writeHead(502, { "Content-Type": "application/json" });
