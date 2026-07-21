@@ -8,6 +8,8 @@ import {
   listGenerationEngines,
   getDatasetTaxonomy,
   saveDatasetRows,
+  estimateGenerationCost,
+  fetchDatasetExport,
   listProfiles,
   getDatasetRows,
   type DatasetRow,
@@ -17,6 +19,7 @@ import {
   type GenerationProvider,
   type GenerationEngine,
   type ProfileSummary,
+  type CostEstimate,
 } from "@/api/datasets";
 import { ProfileWizard } from "./ProfileWizard";
 import { useNavigate } from "react-router";
@@ -42,6 +45,7 @@ import {
   ChevronRight,
   ChevronDown,
   ArrowRight,
+  Download,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -213,6 +217,30 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"jsonl" | "csv" | null>(null);
+
+  const doExport = async (format: "jsonl" | "csv") => {
+    setExporting(format);
+    setErr(null);
+    try {
+      const text = await fetchDatasetExport(d.path, format);
+      const blob = new Blob([text], {
+        type: format === "csv" ? "text/csv" : "application/x-ndjson",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${d.name}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const toggle = async () => {
     const next = !open;
@@ -279,6 +307,39 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
             )}
             View rows
           </Button>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">Export:</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              disabled={exporting !== null}
+              onClick={() => doExport("jsonl")}
+              title="Download as newline-delimited JSON (promptfoo, OpenAI evals)"
+            >
+              {exporting === "jsonl" ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Download className="w-3 h-3" />
+              )}
+              JSONL
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              disabled={exporting !== null}
+              onClick={() => doExport("csv")}
+              title="Download as CSV (spreadsheets, deepeval CSV import)"
+            >
+              {exporting === "csv" ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Download className="w-3 h-3" />
+              )}
+              CSV
+            </Button>
+          </div>
         </div>
       </div>
       {open && (
@@ -328,6 +389,12 @@ export function DatasetsPage() {
   const [maxTurns, setMaxTurns] = useState(3);
   // Custom instructions injected into the generation prompt — the iterate lever.
   const [instructions, setInstructions] = useState("");
+  // Few-shot style examples (one per line) the generator should match.
+  const [examples, setExamples] = useState("");
+  // Top-up: append generated rows to an existing dataset instead of replacing.
+  const [append, setAppend] = useState(false);
+  // Live pre-generation cost estimate for the current engine/model/count.
+  const [cost, setCost] = useState<CostEstimate | null>(null);
   // Taxonomy focus: available options for the current kind/family + the user's
   // selection. Empty selection = the full pool (no override).
   const [taxonomy, setTaxonomy] = useState<DatasetTaxonomy | null>(null);
@@ -336,7 +403,7 @@ export function DatasetsPage() {
   // Curate-before-save: generate into a review list, keep the good rows.
   const [reviewMode, setReviewMode] = useState(false);
   const [curate, setCurate] = useState<
-    { rows: { row: DatasetRow; keep: boolean }[]; out: string } | null
+    { rows: { row: DatasetRow; keep: boolean }[]; out: string; append: boolean } | null
   >(null);
   const [saving, setSaving] = useState(false);
   // Generation engine: a direct LLM engine id, or "data-designer". Default is
@@ -400,6 +467,27 @@ export function DatasetsPage() {
     setSelSeverities([]);
   }, [kind, family]);
 
+  // Live cost estimate — debounced so typing in the count field doesn't spam
+  // the endpoint. Cleared on unmount / dependency change.
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(() => {
+      estimateGenerationCost({
+        backend: engine,
+        model: model.trim() || undefined,
+        count,
+        turnMode,
+        maxTurns,
+      })
+        .then((c) => !cancelled && setCost(c))
+        .catch(() => !cancelled && setCost(null));
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [engine, model, count, turnMode, maxTurns]);
+
   const toggle = (
     list: string[],
     setList: (v: string[]) => void,
@@ -451,6 +539,8 @@ export function DatasetsPage() {
     profile?: { name: string; tools: number; policies: number; rules: number };
     turnMode?: "multi";
     maxTurns?: number;
+    appended?: boolean;
+    added?: number;
   }) => {
     const seedNote = res.seeds
       ? ` — seeded from analysis (${res.seeds.roles} roles, ${res.seeds.surfaces} surfaces)`
@@ -460,7 +550,10 @@ export function DatasetsPage() {
       : "";
     const turnNote =
       res.turnMode === "multi" ? ` — multi-turn (up to ${res.maxTurns} turns)` : "";
-    return `Generated ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`;
+    const lead = res.appended
+      ? `Appended ${res.added} new rows -> ${res.out} (now ${res.rowCount} total, `
+      : `Generated ${res.rowCount} rows -> ${res.out} (`;
+    return `${lead}dropped ${res.duplicatesDropped} duplicates)${seedNote}${profileNote}${turnNote}`;
   };
 
   const onGenerate = async () => {
@@ -474,6 +567,12 @@ export function DatasetsPage() {
     const out = `data/datasets/${dir}/${outName.replace(/[^a-z0-9._-]/gi, "-")}.json`;
     // Review/curate only makes sense for direct engines (they stream + return rows).
     const isPreview = isDirect && reviewMode;
+    // Few-shot examples: one per line, blank lines dropped.
+    const examplesList = examples
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 8);
     const body = {
       preset: PRESETS[`${kind}-${family}`],
       out,
@@ -485,6 +584,8 @@ export function DatasetsPage() {
       ...(profileId ? { profileId } : {}),
       ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+      ...(examplesList.length ? { examples: examplesList } : {}),
+      ...(append && !isPreview ? { append: true } : {}),
       ...(kind === "security" && selCategories.length ? { categories: selCategories } : {}),
       ...(kind === "security" && selSeverities.length ? { severities: selSeverities } : {}),
       ...(kind === "quality" && selCategories.length ? { tasks: selCategories } : {}),
@@ -508,7 +609,11 @@ export function DatasetsPage() {
             );
           } else if (e.type === "done") {
             if (e.preview && e.rows) {
-              setCurate({ rows: e.rows.map((r) => ({ row: r, keep: true })), out });
+              setCurate({
+                rows: e.rows.map((r) => ({ row: r, keep: true })),
+                out,
+                append,
+              });
               setOk(
                 `Generated ${e.rows.length} rows for review — untick any you don't want, then Save.`,
               );
@@ -538,9 +643,16 @@ export function DatasetsPage() {
     setSaving(true);
     setError(null);
     try {
-      const res = await saveDatasetRows({ out: curate.out, kind, rows: kept });
+      const res = await saveDatasetRows({
+        out: curate.out,
+        kind,
+        rows: kept,
+        append: curate.append,
+      });
       setOk(
-        `Saved ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates).`,
+        res.appended
+          ? `Appended ${res.added} new rows -> ${res.out} (now ${res.rowCount} total, dropped ${res.duplicatesDropped} duplicates).`
+          : `Saved ${res.rowCount} rows -> ${res.out} (dropped ${res.duplicatesDropped} duplicates).`,
       );
       setCurate(null);
       await refresh();
@@ -762,6 +874,27 @@ export function DatasetsPage() {
                 Review before saving
               </label>
             )}
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={append}
+                onChange={(e) => setAppend(e.target.checked)}
+              />
+              Append to existing (top up)
+            </label>
+            {cost && (
+              <span
+                className="text-xs text-muted-foreground ml-auto"
+                title={cost.note}
+              >
+                {cost.priced
+                  ? cost.usd === 0
+                    ? "Est. cost: free (local)"
+                    : `Est. cost: ~$${cost.usd < 0.01 ? cost.usd.toFixed(4) : cost.usd.toFixed(2)}`
+                  : "Est. cost: n/a"}
+                <span className="opacity-60"> · {cost.calls} calls</span>
+              </span>
+            )}
           </div>
           {!effInfo.apiKeyEnv ? (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -860,6 +993,27 @@ export function DatasetsPage() {
               Injected into the generation prompt to steer style and content, then
               regenerate. The output format and grading contract are preserved.
               Tweak these and hit Generate again to iterate.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs" htmlFor="examples">
+              Few-shot examples (optional) — one per line, up to 8
+            </Label>
+            <Textarea
+              id="examples"
+              className="w-full min-h-16 text-xs font-mono"
+              value={examples}
+              onChange={(e) => setExamples(e.target.value)}
+              placeholder={
+                kind === "security"
+                  ? "Paste a few real (or realistic) attacker messages — one per line.\nThe generator matches their shape and difficulty without copying them."
+                  : "Paste a few real user requests — one per line.\nThe generator matches their tone and shape without copying them."
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              The strongest lever for "make it look like my app's traffic." Examples
+              steer shape/tone; they are never emitted verbatim.
             </p>
           </div>
 

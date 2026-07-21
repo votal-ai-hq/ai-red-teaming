@@ -81,6 +81,13 @@ export interface DatasetPreset {
    * Refines how each case is written; the output-format contract is preserved.
    */
   customInstructions?: string;
+  /**
+   * Few-shot style examples — sample prompts/inputs the generator should match
+   * in shape, tone, and difficulty (without copying verbatim). The strongest
+   * lever for "make the dataset look like MY app's traffic". Capped in the
+   * config builder so a large paste can't dominate the prompt.
+   */
+  examples?: string[];
   /** Total rows to generate. */
   count?: number;
   /** Minimum rows per category (balance floor). */

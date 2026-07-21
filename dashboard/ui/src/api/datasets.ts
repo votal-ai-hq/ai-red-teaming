@@ -31,6 +31,8 @@ export interface GenerateDatasetRequest {
   backend?: string;
   /** Custom instructions injected into the generation prompt (iterate lever). */
   instructions?: string;
+  /** Few-shot style examples the generator should match. */
+  examples?: string[];
   /** Focus generation on a subset of the taxonomy (empty = full pool). */
   categories?: string[];
   severities?: string[];
@@ -38,6 +40,8 @@ export interface GenerateDatasetRequest {
   metrics?: string[];
   /** Preview/curate: generate + validate but don't write; return the rows. */
   preview?: boolean;
+  /** Top-up: merge generated rows into the existing `out` file. */
+  append?: boolean;
 }
 
 export interface GenerationProvider {
@@ -160,6 +164,43 @@ export interface GenerateDatasetResponse {
   maxTurns?: number;
   /** Which engine produced the rows. */
   backend?: string;
+  /** Present when rows were appended to an existing dataset (top-up). */
+  appended?: boolean;
+  added?: number;
+}
+
+export interface CostEstimate {
+  usd: number;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  priced: boolean;
+  note: string;
+}
+
+/** Rough pre-generation cost estimate for a direct engine. */
+export function estimateGenerationCost(params: {
+  backend: string;
+  model?: string;
+  count: number;
+  turnMode?: "single" | "multi";
+  maxTurns?: number;
+}) {
+  const q = new URLSearchParams({
+    backend: params.backend,
+    count: String(params.count),
+    turnMode: params.turnMode ?? "single",
+    maxTurns: String(params.maxTurns ?? 3),
+  });
+  if (params.model) q.set("model", params.model);
+  return apiFetch<CostEstimate>(`/api/datasets/cost?${q.toString()}`);
+}
+
+/** Fetch a dataset rendered in an interop format (jsonl | csv) as text. */
+export function fetchDatasetExport(path: string, format: "jsonl" | "csv") {
+  return apiFetch<string>(
+    `/api/datasets/export?path=${encodeURIComponent(path)}&format=${format}`,
+  );
 }
 
 export function listDatasets() {
@@ -180,6 +221,8 @@ export function saveDatasetRows(body: {
   out: string;
   kind: "security" | "quality";
   rows: DatasetRow[];
+  /** Top-up: merge into the existing file instead of replacing. */
+  append?: boolean;
 }) {
   return apiFetch<GenerateDatasetResponse>("/api/datasets/save", {
     method: "POST",

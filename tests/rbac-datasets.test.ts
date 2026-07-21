@@ -19,6 +19,12 @@ describe("RBAC for dataset/eval endpoints (regression: login-loop 403)", () => {
     expect(checkPermission("GET", "/api/datasets/taxonomy", "viewer")).toBe(true);
     expect(checkPermission("GET", "/api/datasets/taxonomy", "admin")).toBe(true);
   });
+  it("allows viewer+admin to export datasets and read cost estimates", () => {
+    expect(checkPermission("GET", "/api/datasets/export", "viewer")).toBe(true);
+    expect(checkPermission("GET", "/api/datasets/export", "admin")).toBe(true);
+    expect(checkPermission("GET", "/api/datasets/cost", "viewer")).toBe(true);
+    expect(checkPermission("GET", "/api/datasets/cost", "admin")).toBe(true);
+  });
   it("allows viewer+admin to list profiles but restricts save/import to admin", () => {
     expect(checkPermission("GET", "/api/datasets/profiles", "viewer")).toBe(true);
     expect(checkPermission("GET", "/api/datasets/profiles", "admin")).toBe(true);

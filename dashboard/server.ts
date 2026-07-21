@@ -11,7 +11,7 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, extname, dirname, resolve as resolvePath } from "node:path";
+import { join, extname, dirname, basename, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -73,7 +73,18 @@ import {
   recordToRow,
   recordToQualityRow,
 } from "../lib/dataset/map-records.js";
-import { validateRows, validateQualityRows, formatHistogram } from "../lib/dataset/validate.js";
+import {
+  validateRows,
+  validateQualityRows,
+  formatHistogram,
+  mergeDatasets,
+} from "../lib/dataset/validate.js";
+import { estimateCost } from "../lib/dataset/cost-estimate.js";
+import {
+  exportDataset,
+  exportContentType,
+  isExportFormat,
+} from "../lib/dataset/export.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
 import type { DatasetPreset, DatasetRow } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
@@ -1666,6 +1677,8 @@ const server = createServer(
           out?: string;
           kind?: string;
           rows?: unknown[];
+          /** Top-up: merge into the existing `out` file instead of replacing. */
+          append?: boolean;
         };
         const outAbs = resolvePath(repoRoot, body.out || "");
         if (
@@ -1680,23 +1693,41 @@ const server = createServer(
           return;
         }
         const rows = Array.isArray(body.rows) ? body.rows : [];
-        const { valid, errors, histogram, duplicatesDropped } =
-          body.kind === "quality"
-            ? validateQualityRows(rows)
-            : validateRows(rows);
-        if (errors.length > 0 || valid.length === 0) {
+        const kind = body.kind === "quality" ? "quality" : "security";
+        const gen = kind === "quality" ? validateQualityRows(rows) : validateRows(rows);
+        if (gen.errors.length > 0 || gen.valid.length === 0) {
           res.writeHead(422, {
             "Content-Type": "application/json",
           });
           res.end(
             JSON.stringify({
               error: "no valid rows to save",
-              invalid: errors.length,
-              kept: valid.length,
-              sampleErrors: errors.slice(0, 10),
+              invalid: gen.errors.length,
+              kept: gen.valid.length,
+              sampleErrors: gen.errors.slice(0, 10),
             }),
           );
           return;
+        }
+        // Top-up: merge into the existing file, deduping across both sets.
+        let valid: unknown[] = gen.valid;
+        let histogram = gen.histogram;
+        let duplicatesDropped = gen.duplicatesDropped;
+        let added = gen.valid.length;
+        const append = body.append === true && existsSync(outAbs);
+        if (append) {
+          let existingRows: unknown[] = [];
+          try {
+            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
+            if (Array.isArray(parsed)) existingRows = parsed;
+          } catch {
+            /* unreadable existing file — treat as fresh write */
+          }
+          const merged = mergeDatasets(kind, existingRows, gen.valid);
+          added = merged.added;
+          duplicatesDropped += gen.valid.length - merged.added;
+          valid = merged.valid;
+          histogram = merged.histogram;
         }
         mkdirSync(dirname(outAbs), { recursive: true });
         writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
@@ -1708,6 +1739,7 @@ const server = createServer(
             duplicatesDropped,
             histogram,
             summary: formatHistogram(histogram),
+            ...(append ? { appended: true, added } : {}),
           }),
         );
       } catch (err) {
@@ -1749,6 +1781,71 @@ const server = createServer(
         res.end(
           JSON.stringify({ path: rel, total: all.length, rows: all.slice(0, limit) }),
         );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: export a dataset to an interop format (jsonl | csv) for other eval
+    // tooling. Read-only; contained to data/datasets/*.json like the row viewer.
+    if (url.pathname === "/api/datasets/export" && req.method === "GET") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const rel = url.searchParams.get("path") || "";
+        const format = url.searchParams.get("format") || "jsonl";
+        if (!isExportFormat(format)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "format must be jsonl or csv" }));
+          return;
+        }
+        const abs = resolvePath(repoRoot, rel);
+        if (
+          !abs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !abs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "path must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        if (!existsSync(abs)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
+          return;
+        }
+        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
+        const all = Array.isArray(parsed) ? parsed : [];
+        const body = exportDataset(all, format);
+        const base = basename(abs).replace(/\.json$/, "");
+        res.writeHead(200, {
+          "Content-Type": exportContentType(format),
+          "Content-Disposition": `attachment; filename="${base}.${format}"`,
+        });
+        res.end(body);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: rough pre-generation cost estimate for a direct engine. Pure compute,
+    // no I/O — lets the UI show "~$X for N rows" before the user commits.
+    if (url.pathname === "/api/datasets/cost" && req.method === "GET") {
+      try {
+        const q = url.searchParams;
+        const estimate = estimateCost({
+          backend: q.get("backend") || "openai",
+          model: q.get("model") || undefined,
+          count: parseInt(q.get("count") || "0", 10) || 0,
+          turnMode: q.get("turnMode") === "multi" ? "multi" : "single",
+          maxTurns: parseInt(q.get("maxTurns") || "3", 10) || 3,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(estimate));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));
@@ -1940,11 +2037,15 @@ const server = createServer(
           stream?: boolean;
           /** Custom instructions injected into the generation prompt. */
           instructions?: string;
+          /** Few-shot style examples the generator should match. */
+          examples?: string[];
           /** Focus generation on a subset of the taxonomy. */
           categories?: string[];
           severities?: string[];
           tasks?: string[];
           metrics?: string[];
+          /** Top-up: merge generated rows into the existing `out` file. */
+          append?: boolean;
           /**
            * Preview/curate mode: generate + validate but DON'T write the file —
            * the response carries the rows so the UI can let the user deselect
@@ -1987,6 +2088,14 @@ const server = createServer(
         if (typeof body.instructions === "string" && body.instructions.trim()) {
           // Cap so a runaway paste can't dominate the generation prompt.
           preset.customInstructions = body.instructions.trim().slice(0, 4000);
+        }
+        if (Array.isArray(body.examples)) {
+          // Few-shot exemplars; builder caps again, but bound here too.
+          const ex = body.examples
+            .map((e) => String(e ?? "").trim())
+            .filter(Boolean)
+            .slice(0, 8);
+          if (ex.length) preset.examples = ex;
         }
         // Focus the taxonomy: only non-empty selections override the preset's
         // full pool. Invalid values fail closed in the config builder.
@@ -2151,10 +2260,15 @@ const server = createServer(
           const client = new NemoDataDesignerClient();
           records = await client.generate(ddConfig, preset.count);
         }
-        const { valid, errors, histogram, duplicatesDropped } =
+        // Validate the freshly generated rows (the quality gate is on these).
+        const gen =
           kind === "quality"
             ? validateQualityRows(recordsToQualityRows(records))
             : validateRows(recordsToRows(records, preset.family));
+        const errors = gen.errors;
+        let valid: unknown[] = gen.valid;
+        let histogram = gen.histogram;
+        let duplicatesDropped = gen.duplicatesDropped;
 
         if (errors.length > 0 || valid.length === 0) {
           const payload = {
@@ -2175,6 +2289,23 @@ const server = createServer(
 
         // Preview/curate mode: return the rows for review instead of writing.
         const preview = body.preview === true;
+        // Top-up: merge into the existing file, deduping across both sets.
+        const append = body.append === true && !preview && existsSync(outAbs);
+        let addedCount = valid.length;
+        if (append) {
+          let existingRows: unknown[] = [];
+          try {
+            const parsed = JSON.parse(readFileSync(outAbs, "utf-8"));
+            if (Array.isArray(parsed)) existingRows = parsed;
+          } catch {
+            /* unreadable existing file — treat as fresh write */
+          }
+          const merged = mergeDatasets(kind, existingRows, valid);
+          addedCount = merged.added;
+          duplicatesDropped += valid.length - merged.added;
+          valid = merged.valid;
+          histogram = merged.histogram;
+        }
         if (!preview) {
           mkdirSync(dirname(outAbs), { recursive: true });
           writeFileSync(outAbs, JSON.stringify(valid, null, 2) + "\n", "utf-8");
@@ -2187,6 +2318,7 @@ const server = createServer(
           histogram,
           summary: formatHistogram(histogram),
           backend,
+          ...(append ? { appended: true, added: addedCount } : {}),
           ...(preview ? { preview: true, rows: valid } : {}),
           ...(seedInfo ? { seeds: seedInfo } : {}),
           ...(profileInfo ? { profile: profileInfo } : {}),
