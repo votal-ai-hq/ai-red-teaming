@@ -304,14 +304,17 @@ describe("fixture dataset round-trips through the real loader", () => {
     const config = {
       requestSchema: { messageField: "message", roleField: "role" },
       auth: { credentials: [{ role: "viewer" }] },
-      customAttacksFile: "data/datasets/nemo-mcp/fixture.json",
+      customAttacksFile: "tests/fixtures/data/datasets/nemo-mcp/fixture.json",
     } as unknown as Config;
 
     const attacks = loadCustomAttacksFromConfig(config, {
       configDir: resolve("."),
     });
     const fixture = JSON.parse(
-      readFileSync(resolve("data/datasets/nemo-mcp/fixture.json"), "utf-8"),
+      readFileSync(
+        resolve("tests/fixtures/data/datasets/nemo-mcp/fixture.json"),
+        "utf-8",
+      ),
     );
     expect(attacks.length).toBe(fixture.length);
     for (const a of attacks) {
@@ -323,7 +326,7 @@ describe("fixture dataset round-trips through the real loader", () => {
 
 describe("listDatasets", () => {
   it("summarizes committed datasets with counts + histogram + family", () => {
-    const found = listDatasets(resolve("."));
+    const found = listDatasets(resolve("tests/fixtures"));
     const fixture = found.find((d) => d.path.endsWith("nemo-mcp/fixture.json"));
     expect(fixture).toBeTruthy();
     expect(fixture!.family).toBe("mcp");

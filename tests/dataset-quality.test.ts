@@ -87,12 +87,17 @@ describe("recordToQualityRow", () => {
 
 describe("listDatasets infers kind", () => {
   it("flags the quality fixture as kind=quality with task histogram", () => {
-    const found = listDatasets(resolve("."));
+    const found = listDatasets(resolve("tests/fixtures"));
     const q = found.find((d) => d.path.endsWith("quality-agent/fixture.json"));
     expect(q).toBeTruthy();
     expect(q!.kind).toBe("quality");
     expect(q!.rowCount).toBe(
-      JSON.parse(readFileSync(resolve("data/datasets/quality-agent/fixture.json"), "utf-8")).length,
+      JSON.parse(
+        readFileSync(
+          resolve("tests/fixtures/data/datasets/quality-agent/fixture.json"),
+          "utf-8",
+        ),
+      ).length,
     );
     const sec = found.find((d) => d.path.endsWith("nemo-mcp/fixture.json"));
     expect(sec!.kind).toBe("security");

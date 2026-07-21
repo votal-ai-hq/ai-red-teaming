@@ -36,6 +36,14 @@ import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-bu
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { generateWithOpenAI } from "../lib/dataset/openai-generator.js";
 import {
+  GENERATION_ENGINES,
+  getEngine,
+  isEngineId,
+  engineKeyConfigured,
+  resolveChat,
+  type EngineId,
+} from "../lib/dataset/generation-engines.js";
+import {
   DATASET_PROVIDERS,
   applyGenerationOverrides,
 } from "../lib/dataset/provider-options.js";
@@ -1757,6 +1765,27 @@ const server = createServer(
       return;
     }
 
+    // API: direct-generation engines (OpenAI / Anthropic / OpenRouter / Ollama)
+    // + whether each engine's API key is configured, so the UI can offer an
+    // informed engine/model choice (single source of truth is
+    // lib/dataset/generation-engines.ts).
+    if (url.pathname === "/api/datasets/engines" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          engines: GENERATION_ENGINES.map((e) => ({
+            id: e.id,
+            label: e.label,
+            defaultModel: e.defaultModel,
+            suggestedModels: e.suggestedModels,
+            apiKeyEnv: e.apiKeyEnv ?? null,
+            keyConfigured: engineKeyConfigured(e),
+          })),
+        }),
+      );
+      return;
+    }
+
     // API: generation providers + whether their API key is configured, so the
     // UI can offer an informed provider/model choice (single source of truth
     // is lib/dataset/provider-options.ts).
@@ -1808,9 +1837,13 @@ const server = createServer(
           turnMode?: "single" | "multi";
           /** Max turns for multi-turn generation (clamped to 2..8). */
           maxTurns?: number;
-          /** "data-designer" (default) or "openai" (call OpenAI directly). */
-          backend?: "data-designer" | "openai";
-          /** Stream row-by-row NDJSON progress (OpenAI-direct only). */
+          /**
+           * Generation engine: a direct LLM engine (openai | anthropic |
+           * openrouter | ollama) or the NeMo "data-designer" service. Defaults
+           * to "openai".
+           */
+          backend?: string;
+          /** Stream row-by-row NDJSON progress (direct engines only). */
           stream?: boolean;
         };
         if (!body.preset || !body.out) {
@@ -1860,13 +1893,23 @@ const server = createServer(
           res.end(JSON.stringify({ error: overrideError }));
           return;
         }
-        // Direct-OpenAI generation must use an OpenAI model — a NIM model id
-        // (e.g. "meta/llama-…") won't resolve against OpenAI. Force provider and
-        // fall back to a sensible OpenAI default if the model isn't OpenAI-shaped.
-        if (body.backend === "openai") {
-          preset.provider = "openai";
-          if (!preset.generationModel || preset.generationModel.includes("/")) {
-            preset.generationModel = "gpt-4o-mini";
+        // Resolve the generation backend. Default is the "openai" direct
+        // engine; "data-designer" keeps the NeMo service path. Any direct
+        // engine that isn't explicitly given a model uses the engine's default.
+        const backendRaw = body.backend ?? "openai";
+        if (backendRaw !== "data-designer" && !isEngineId(backendRaw)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: `unknown engine "${backendRaw}" (expected data-designer or one of: ${GENERATION_ENGINES.map((e) => e.id).join(", ")})`,
+            }),
+          );
+          return;
+        }
+        if (backendRaw !== "data-designer") {
+          const engine = getEngine(backendRaw as EngineId)!;
+          if (!body.generationModel) {
+            preset.generationModel = engine.defaultModel;
           }
         }
         if (preset.family !== "mcp" && preset.family !== "agent") {
@@ -1938,15 +1981,17 @@ const server = createServer(
             ? buildQualityDataDesignerConfig(preset, seeds)
             : buildDataDesignerConfig(preset, seeds);
 
-        // Generation backend: "openai" calls OpenAI directly (no Data Designer
-        // service); "data-designer" (default) posts to the NeMo microservice.
-        // Same config in, same records out — everything else is unchanged.
-        const backend = body.backend === "openai" ? "openai" : "data-designer";
+        // Generation backend: a direct LLM engine (openai | anthropic |
+        // openrouter | ollama) calls that provider directly (no Data Designer
+        // service); "data-designer" posts to the NeMo microservice. Same config
+        // in, same records out — everything else is unchanged.
+        const backend = backendRaw === "data-designer" ? "data-designer" : (backendRaw as EngineId);
+        const isDirect = backend !== "data-designer";
 
-        // Live streaming (OpenAI-direct only — Data Designer returns a batch).
+        // Live streaming (direct engines only — Data Designer returns a batch).
         // Emits NDJSON: {type:"row",...} per generated row, then a final
         // {type:"done",...} or {type:"error",...}.
-        const streaming = backend === "openai" && body.stream === true;
+        const streaming = isDirect && body.stream === true;
         if (streaming) {
           res.writeHead(200, {
             "Content-Type": "application/x-ndjson",
@@ -1960,8 +2005,10 @@ const server = createServer(
         streamStarted = streaming;
 
         let records;
-        if (backend === "openai") {
+        if (isDirect) {
+          const chat = resolveChat(backend as EngineId);
           records = await generateWithOpenAI(ddConfig, preset.count ?? 300, {
+            chat,
             onRow: streaming
               ? (rec, index, total) => {
                   const row =

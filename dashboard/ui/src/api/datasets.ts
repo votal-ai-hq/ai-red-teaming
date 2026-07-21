@@ -26,8 +26,9 @@ export interface GenerateDatasetRequest {
   turnMode?: "single" | "multi";
   /** Max turns for multi-turn generation (2..8). */
   maxTurns?: number;
-  /** Generation engine: "data-designer" (default) or "openai" (direct, no service). */
-  backend?: "data-designer" | "openai";
+  /** Generation engine: a direct LLM engine id (openai | anthropic | openrouter
+   *  | ollama) or "data-designer". Defaults to "openai". */
+  backend?: string;
 }
 
 export interface GenerationProvider {
@@ -44,6 +45,19 @@ export function listGenerationProviders() {
   return apiFetch<{ providers: GenerationProvider[] }>(
     "/api/datasets/providers",
   );
+}
+
+export interface GenerationEngine {
+  id: string;
+  label: string;
+  defaultModel: string;
+  suggestedModels: string[];
+  apiKeyEnv: string | null;
+  keyConfigured: boolean;
+}
+
+export function listGenerationEngines() {
+  return apiFetch<{ engines: GenerationEngine[] }>("/api/datasets/engines");
 }
 
 // --- App profiles (tailor generation to a specific target app) ---
@@ -121,7 +135,7 @@ export interface GenerateDatasetResponse {
   turnMode?: "multi";
   maxTurns?: number;
   /** Which engine produced the rows. */
-  backend?: "data-designer" | "openai";
+  backend?: string;
 }
 
 export function listDatasets() {
