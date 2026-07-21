@@ -31,6 +31,11 @@ export interface GenerateDatasetRequest {
   backend?: string;
   /** Custom instructions injected into the generation prompt (iterate lever). */
   instructions?: string;
+  /** Focus generation on a subset of the taxonomy (empty = full pool). */
+  categories?: string[];
+  severities?: string[];
+  tasks?: string[];
+  metrics?: string[];
 }
 
 export interface GenerationProvider {
@@ -60,6 +65,21 @@ export interface GenerationEngine {
 
 export function listGenerationEngines() {
   return apiFetch<{ engines: GenerationEngine[] }>("/api/datasets/engines");
+}
+
+export interface DatasetTaxonomy {
+  kind: "security" | "quality";
+  family: string;
+  categories?: string[];
+  severities?: string[];
+  tasks?: string[];
+  metrics?: string[];
+}
+
+export function getDatasetTaxonomy(kind: string, family: string) {
+  return apiFetch<DatasetTaxonomy>(
+    `/api/datasets/taxonomy?kind=${kind}&family=${family}`,
+  );
 }
 
 // --- App profiles (tailor generation to a specific target app) ---

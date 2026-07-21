@@ -6,10 +6,12 @@ import {
   listEvalRuns,
   listGenerationProviders,
   listGenerationEngines,
+  getDatasetTaxonomy,
   listProfiles,
   getDatasetRows,
   type DatasetRow,
   type DatasetSummary,
+  type DatasetTaxonomy,
   type EvalTrend,
   type GenerationProvider,
   type GenerationEngine,
@@ -325,6 +327,11 @@ export function DatasetsPage() {
   const [maxTurns, setMaxTurns] = useState(3);
   // Custom instructions injected into the generation prompt — the iterate lever.
   const [instructions, setInstructions] = useState("");
+  // Taxonomy focus: available options for the current kind/family + the user's
+  // selection. Empty selection = the full pool (no override).
+  const [taxonomy, setTaxonomy] = useState<DatasetTaxonomy | null>(null);
+  const [selCategories, setSelCategories] = useState<string[]>([]);
+  const [selSeverities, setSelSeverities] = useState<string[]>([]);
   // Generation engine: a direct LLM engine id, or "data-designer". Default is
   // OpenAI (the direct path — no NeMo service required).
   const [engines, setEngines] = useState<GenerationEngine[]>(FALLBACK_ENGINES);
@@ -375,6 +382,25 @@ export function DatasetsPage() {
       })
       .catch(() => {});
   }, []);
+
+  // Load the selectable taxonomy whenever kind/family change; clear any stale
+  // selection so it can't carry a category from the other family.
+  useEffect(() => {
+    getDatasetTaxonomy(kind, family)
+      .then((t) => setTaxonomy(t))
+      .catch(() => setTaxonomy(null));
+    setSelCategories([]);
+    setSelSeverities([]);
+  }, [kind, family]);
+
+  const toggle = (
+    list: string[],
+    setList: (v: string[]) => void,
+    value: string,
+  ) =>
+    setList(
+      list.includes(value) ? list.filter((v) => v !== value) : [...list, value],
+    );
 
   const provider =
     providers.find((p) => p.id === providerId) ?? providers[0];
@@ -447,6 +473,10 @@ export function DatasetsPage() {
       ...(profileId ? { profileId } : {}),
       ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+      ...(kind === "security" && selCategories.length ? { categories: selCategories } : {}),
+      ...(kind === "security" && selSeverities.length ? { severities: selSeverities } : {}),
+      ...(kind === "quality" && selCategories.length ? { tasks: selCategories } : {}),
+      ...(kind === "quality" && selSeverities.length ? { metrics: selSeverities } : {}),
       ...(seedConfigPath.trim() ? { seedConfigPath: seedConfigPath.trim() } : {}),
     };
     try {
@@ -701,6 +731,65 @@ export function DatasetsPage() {
               generation with {effInfo.label} will fail until it is.
             </p>
           )}
+          {taxonomy &&
+            (() => {
+              const primary = taxonomy.categories ?? taxonomy.tasks ?? [];
+              const secondary = taxonomy.severities ?? taxonomy.metrics ?? [];
+              const primaryLabel = kind === "security" ? "Categories" : "Tasks";
+              const secondaryLabel = kind === "security" ? "Severities" : "Metrics";
+              return (
+                <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
+                  <Label className="text-xs">
+                    Focus (optional) — leave empty to cover the full set
+                  </Label>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {primaryLabel}
+                      {selCategories.length ? ` (${selCategories.length} selected)` : " (all)"}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {primary.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => toggle(selCategories, setSelCategories, c)}
+                        >
+                          <Badge
+                            variant={selCategories.includes(c) ? "default" : "outline"}
+                            className="cursor-pointer text-[10px]"
+                          >
+                            {c}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      {secondaryLabel}
+                      {selSeverities.length ? ` (${selSeverities.length} selected)` : " (all)"}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {secondary.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => toggle(selSeverities, setSelSeverities, s)}
+                        >
+                          <Badge
+                            variant={selSeverities.includes(s) ? "default" : "outline"}
+                            className="cursor-pointer text-[10px]"
+                          >
+                            {s}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
           <div className="space-y-1">
             <Label className="text-xs" htmlFor="instructions">
               Custom instructions (optional) — iterate on the generation prompt

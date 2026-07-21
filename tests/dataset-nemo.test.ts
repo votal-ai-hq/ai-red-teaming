@@ -112,6 +112,21 @@ describe("buildDataDesignerConfig", () => {
     expect(cat && "values" in cat && cat.values).toEqual(["tool_misuse"]);
   });
 
+  it("focuses categories + severities to a chosen subset", () => {
+    const config = buildDataDesignerConfig({
+      family: "mcp",
+      categories: ["tool_misuse", "cross_tenant_access"],
+      severities: ["critical", "high"],
+    });
+    const cat = config.columns.find((c) => c.name === "category");
+    const sev = config.columns.find((c) => c.name === "severity");
+    expect(cat && "values" in cat && cat.values).toEqual([
+      "tool_misuse",
+      "cross_tenant_access",
+    ]);
+    expect(sev && "values" in sev && sev.values).toEqual(["critical", "high"]);
+  });
+
   it("single-turn (default) emits no turns sampler and the single-message template", () => {
     const config = buildDataDesignerConfig({ family: "mcp", count: 5 });
     expect(config.columns.some((c) => c.name === "turns")).toBe(false);

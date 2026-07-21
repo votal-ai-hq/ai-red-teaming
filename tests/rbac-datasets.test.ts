@@ -16,6 +16,8 @@ describe("RBAC for dataset/eval endpoints (regression: login-loop 403)", () => {
     expect(checkPermission("GET", "/api/datasets/providers", "admin")).toBe(true);
     expect(checkPermission("GET", "/api/datasets/engines", "viewer")).toBe(true);
     expect(checkPermission("GET", "/api/datasets/engines", "admin")).toBe(true);
+    expect(checkPermission("GET", "/api/datasets/taxonomy", "viewer")).toBe(true);
+    expect(checkPermission("GET", "/api/datasets/taxonomy", "admin")).toBe(true);
   });
   it("allows viewer+admin to list profiles but restricts save/import to admin", () => {
     expect(checkPermission("GET", "/api/datasets/profiles", "viewer")).toBe(true);

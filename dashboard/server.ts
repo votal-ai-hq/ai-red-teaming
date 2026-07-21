@@ -33,6 +33,11 @@ import { analyzeCodebase } from "../lib/codebase-analyzer.js";
 import type { DatasetSeeds } from "../lib/dataset/types.js";
 import { buildDataDesignerConfig } from "../lib/dataset/nemo-config-builder.js";
 import { buildQualityDataDesignerConfig } from "../lib/dataset/quality-config-builder.js";
+import { defaultCategoryPool } from "../lib/dataset/category-set.js";
+import {
+  defaultQualityPool,
+  QUALITY_METRICS,
+} from "../lib/dataset/quality-set.js";
 import { NemoDataDesignerClient } from "../lib/dataset/nemo-client.js";
 import { generateWithOpenAI } from "../lib/dataset/openai-generator.js";
 import {
@@ -1765,6 +1770,34 @@ const server = createServer(
       return;
     }
 
+    // API: the taxonomy a user can select from for a given kind + family —
+    // attack categories + severities (security) or tasks + metrics (quality).
+    if (url.pathname === "/api/datasets/taxonomy" && req.method === "GET") {
+      const kind = url.searchParams.get("kind") === "quality" ? "quality" : "security";
+      const family = url.searchParams.get("family") === "agent" ? "agent" : "mcp";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (kind === "quality") {
+        res.end(
+          JSON.stringify({
+            kind,
+            family,
+            tasks: defaultQualityPool(family),
+            metrics: QUALITY_METRICS,
+          }),
+        );
+      } else {
+        res.end(
+          JSON.stringify({
+            kind,
+            family,
+            categories: defaultCategoryPool(family),
+            severities: ["critical", "high", "medium", "low"],
+          }),
+        );
+      }
+      return;
+    }
+
     // API: direct-generation engines (OpenAI / Anthropic / OpenRouter / Ollama)
     // + whether each engine's API key is configured, so the UI can offer an
     // informed engine/model choice (single source of truth is
@@ -1847,6 +1880,11 @@ const server = createServer(
           stream?: boolean;
           /** Custom instructions injected into the generation prompt. */
           instructions?: string;
+          /** Focus generation on a subset of the taxonomy. */
+          categories?: string[];
+          severities?: string[];
+          tasks?: string[];
+          metrics?: string[];
         };
         if (!body.preset || !body.out) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1884,6 +1922,15 @@ const server = createServer(
           // Cap so a runaway paste can't dominate the generation prompt.
           preset.customInstructions = body.instructions.trim().slice(0, 4000);
         }
+        // Focus the taxonomy: only non-empty selections override the preset's
+        // full pool. Invalid values fail closed in the config builder.
+        const strArr = (x: unknown) =>
+          Array.isArray(x) ? x.map(String).filter(Boolean) : [];
+        if (strArr(body.categories).length) preset.categories = strArr(body.categories);
+        if (strArr(body.severities).length)
+          preset.severities = strArr(body.severities) as DatasetPreset["severities"];
+        if (strArr(body.tasks).length) preset.tasks = strArr(body.tasks);
+        if (strArr(body.metrics).length) preset.metrics = strArr(body.metrics);
         if (body.turnMode === "single" || body.turnMode === "multi") {
           preset.turnMode = body.turnMode;
         }
