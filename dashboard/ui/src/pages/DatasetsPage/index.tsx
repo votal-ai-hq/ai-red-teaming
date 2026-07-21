@@ -316,19 +316,34 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
               <ArrowRight className="w-3.5 h-3.5" />
             </Button>
           ) : (
-            <Button
-              size="sm"
-              variant={showEvalCmd ? "secondary" : "default"}
-              onClick={() => setShowEvalCmd((v) => !v)}
-              title="Quality datasets are scored by the CLI quality scorer"
-            >
-              Use for evaluation
-              {showEvalCmd ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setShowEvalCmd((v) => !v)}
+                title="Show the equivalent CLI command"
+              >
+                CLI
+                {showEvalCmd ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate(
+                    `/new-scan?dataset=${encodeURIComponent(d.path)}&mode=quality`,
+                  )
+                }
+                title="Score this dataset against a target from the UI"
+              >
+                Use for evaluation
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           )}
           <Button size="sm" variant="outline" onClick={toggle}>
             {open ? (
