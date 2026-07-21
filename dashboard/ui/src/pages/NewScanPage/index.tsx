@@ -3,7 +3,12 @@ import { useNavigate, useLocation } from "react-router";
 import { createRun } from "@/api/runs";
 import { getReference, discoverMcp } from "@/api/reference";
 import { apiFetch } from "@/api/client";
-import { listDatasets, type DatasetSummary } from "@/api/datasets";
+import {
+  listDatasets,
+  evalQualityStream,
+  type DatasetSummary,
+  type QualityEvalReport,
+} from "@/api/datasets";
 import type { ReferenceData, StrategyInfo, McpDiscoverResult } from "@/api/types";
 import {
   Card,
@@ -296,9 +301,26 @@ export default function NewScanPage() {
   // preselects the dataset and opens the section.
   const deepLinkDataset =
     new URLSearchParams(location.search).get("dataset") || "";
+  // ?mode=quality (from a quality dataset's "Use for evaluation") switches the
+  // form to score the dataset with the quality scorer instead of a red-team scan.
+  const deepLinkMode =
+    new URLSearchParams(location.search).get("mode") === "quality"
+      ? "quality"
+      : "security";
+  const [mode, setMode] = useState<"security" | "quality">(deepLinkMode);
   const [datasetFile, setDatasetFile] = useState(deepLinkDataset);
   const [datasetOnly, setDatasetOnly] = useState(false);
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([]);
+  // Quality-eval knobs + live streaming state.
+  const [evalThreshold, setEvalThreshold] = useState(0.7);
+  const [evalRunning, setEvalRunning] = useState(false);
+  const [evalProgress, setEvalProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const [evalTail, setEvalTail] = useState<
+    { metric: string; score: number; pass: boolean; error?: string }[]
+  >([]);
+  const [evalReport, setEvalReport] = useState<QualityEvalReport | null>(null);
 
   // ── UI state ──
   const [submitting, setSubmitting] = useState(false);
@@ -617,6 +639,50 @@ export default function NewScanPage() {
       return;
     }
 
+    // Quality-eval mode: score the dataset against the target with the quality
+    // scorer, streaming per-row progress inline (no red-team scan is launched).
+    if (mode === "quality") {
+      if (!datasetFile.trim()) {
+        setError("Pick a quality dataset to evaluate.");
+        return;
+      }
+      setEvalRunning(true);
+      setEvalReport(null);
+      setEvalTail([]);
+      setEvalProgress(null);
+      try {
+        const config = buildConfig();
+        await evalQualityStream(
+          { config, dataset: datasetFile.trim(), threshold: evalThreshold },
+          (ev) => {
+            if (ev.type === "start")
+              setEvalProgress({ done: 0, total: ev.total });
+            else if (ev.type === "row") {
+              setEvalProgress({ done: ev.done, total: ev.total });
+              setEvalTail((t) =>
+                [
+                  { metric: ev.metric, score: ev.score, pass: ev.pass, error: ev.error },
+                  ...t,
+                ].slice(0, 12),
+              );
+            } else if (ev.type === "done") {
+              setEvalReport(ev.report);
+              setSuccess(
+                `Eval complete — ${ev.report.summary.passed}/${ev.report.summary.total} passed (avg ${ev.report.summary.score}%).`,
+              );
+            } else if (ev.type === "error")
+              setError(`${ev.error}${ev.detail ? ` — ${ev.detail}` : ""}`);
+          },
+        );
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Quality eval failed.");
+      } finally {
+        setEvalRunning(false);
+        setEvalProgress(null);
+      }
+      return;
+    }
+
     setSubmitting(true);
     try {
       const config = buildConfig();
@@ -734,6 +800,31 @@ export default function NewScanPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-8">
+        {/* Mode: red-team security scan vs. functional-quality eval. */}
+        <section>
+          <div className="inline-flex rounded-lg border border-border p-1 gap-1">
+            <button
+              type="button"
+              onClick={() => setMode("security")}
+              className={`px-3 py-1.5 rounded-md text-sm ${mode === "security" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Security scan
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("quality")}
+              className={`px-3 py-1.5 rounded-md text-sm ${mode === "quality" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Quality eval
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            {mode === "quality"
+              ? "Score a quality dataset for correctness against the target below. Attack/template settings are ignored in this mode."
+              : "Run the red-team attack suite against the target."}
+          </p>
+        </section>
+
         {/* ═══ Step 1: Template ═══ */}
         <section>
           <SectionHeader step={1} title="Choose a scan template" icon={Layers} />
@@ -1741,12 +1832,16 @@ export default function NewScanPage() {
           <CollapsibleSection
             title="Evaluation Dataset"
             icon={FileText}
-            defaultOpen={!!deepLinkDataset}
+            defaultOpen={!!deepLinkDataset || mode === "quality"}
           >
             <div className="space-y-4">
               <FieldRow
-                label="Attack dataset"
-                hint="Run a generated NeMo dataset as the attack set (customAttacksFile). Manage datasets in the Datasets tab."
+                label={mode === "quality" ? "Quality dataset (required)" : "Attack dataset"}
+                hint={
+                  mode === "quality"
+                    ? "The quality dataset to score against the target. Manage datasets in the Datasets tab."
+                    : "Run a generated NeMo dataset as the attack set (customAttacksFile). Manage datasets in the Datasets tab."
+                }
               >
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1764,7 +1859,11 @@ export default function NewScanPage() {
                     {!datasetFile && <CheckCircle className="w-3 h-3" />}
                     None
                   </button>
-                  {availableDatasets.filter((d) => d.kind !== "quality").map((d) => (
+                  {availableDatasets
+                    .filter((d) =>
+                      mode === "quality" ? d.kind === "quality" : d.kind !== "quality",
+                    )
+                    .map((d) => (
                     <button
                       key={d.path}
                       type="button"
@@ -1854,13 +1953,103 @@ export default function NewScanPage() {
           </Card>
         )}
 
+        {/* Quality-eval live progress + results (inline, no navigation). */}
+        {mode === "quality" && (evalRunning || evalProgress || evalReport) && (
+          <section className="rounded-xl border border-border p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-sm font-semibold">Quality eval</span>
+              {evalProgress && (
+                <span className="text-xs text-muted-foreground">
+                  {evalProgress.done}/{evalProgress.total} scored
+                </span>
+              )}
+            </div>
+            {evalReport ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-4 text-sm">
+                  <span>
+                    <span className="font-semibold text-lg">
+                      {evalReport.summary.score}%
+                    </span>{" "}
+                    <span className="text-muted-foreground">avg score</span>
+                  </span>
+                  <span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                      {evalReport.summary.passed}
+                    </span>{" "}
+                    /{evalReport.summary.total}{" "}
+                    <span className="text-muted-foreground">passed</span>
+                  </span>
+                  {evalReport.summary.errors > 0 && (
+                    <span className="text-destructive">
+                      {evalReport.summary.errors} errored
+                    </span>
+                  )}
+                  <span className="text-muted-foreground">
+                    threshold {evalReport.passThreshold}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">By metric</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(evalReport.summary.byMetric).map(([m, v]) => (
+                      <span
+                        key={m}
+                        className="text-[11px] rounded border border-border px-1.5 py-0.5"
+                      >
+                        {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {evalTail.map((r, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span
+                      className={
+                        r.error
+                          ? "text-amber-600 dark:text-amber-400"
+                          : r.pass
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-destructive"
+                      }
+                    >
+                      {r.error ? "ERR" : r.pass ? "PASS" : "FAIL"}
+                    </span>
+                    <span className="text-muted-foreground">{r.metric}</span>
+                    <span>{r.score.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* ═══ Submit ═══ */}
         <button
           type="submit"
-          disabled={submitting || !targetReady}
+          disabled={
+            mode === "quality"
+              ? evalRunning || !targetReady || !datasetFile.trim()
+              : submitting || !targetReady
+          }
           className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.99]"
         >
-          {submitting ? (
+          {mode === "quality" ? (
+            evalRunning ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Scoring…
+              </>
+            ) : (
+              <>
+                <Play className="w-5 h-5" />
+                Run quality eval
+              </>
+            )
+          ) : submitting ? (
             <>
               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               Starting Scan...

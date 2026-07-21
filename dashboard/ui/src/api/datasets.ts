@@ -287,6 +287,78 @@ export async function generateDatasetStream(
   if (tail) onEvent(JSON.parse(tail) as GenerateStreamEvent);
 }
 
+// --- streaming quality evaluation (dataset scored against a target) ---
+
+export interface QualityEvalReport {
+  timestamp: string;
+  targetUrl: string;
+  dataset?: string;
+  passThreshold: number;
+  summary: {
+    total: number;
+    scored: number;
+    errors: number;
+    score: number;
+    passed: number;
+    byMetric: Record<string, { count: number; mean: number; passed: number }>;
+    byTask: Record<string, { count: number; mean: number; passed: number }>;
+  };
+  results: unknown[];
+}
+
+export type EvalQualityStreamEvent =
+  | { type: "start"; total: number; threshold: number; skipped: number }
+  | {
+      type: "row";
+      done: number;
+      total: number;
+      metric: string;
+      score: number;
+      pass: boolean;
+      task?: string;
+      error?: string;
+    }
+  | { type: "done"; report: QualityEvalReport }
+  | { type: "error"; error: string; detail?: string };
+
+export interface EvalQualityRequest {
+  config: Record<string, unknown>;
+  dataset: string;
+  threshold?: number;
+  concurrency?: number;
+}
+
+/** Run a quality eval and stream per-row PASS/FAIL progress via NDJSON. */
+export async function evalQualityStream(
+  body: EvalQualityRequest,
+  onEvent: (e: EvalQualityStreamEvent) => void,
+): Promise<void> {
+  const res = await apiStream("/api/datasets/eval-quality", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) onEvent(JSON.parse(line) as EvalQualityStreamEvent);
+    }
+  }
+  const tail = buf.trim();
+  if (tail) onEvent(JSON.parse(tail) as EvalQualityStreamEvent);
+}
+
 export interface EvalRunPoint {
   filename: string;
   timestamp: string;

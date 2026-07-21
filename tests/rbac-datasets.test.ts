@@ -42,6 +42,11 @@ describe("RBAC for dataset/eval endpoints (regression: login-loop 403)", () => {
     expect(checkPermission("POST", "/api/datasets/save", "viewer")).toBe(false);
     expect(checkPermission("POST", "/api/datasets/save", "auditor")).toBe(false);
   });
+  it("restricts quality eval (runs the scorer against a target) to admin", () => {
+    expect(checkPermission("POST", "/api/datasets/eval-quality", "admin")).toBe(true);
+    expect(checkPermission("POST", "/api/datasets/eval-quality", "viewer")).toBe(false);
+    expect(checkPermission("POST", "/api/datasets/eval-quality", "auditor")).toBe(false);
+  });
   it("GET /api/datasets pattern does not swallow the generate path", () => {
     // ensure the two rules stay distinct
     expect(checkPermission("GET", "/api/datasets/generate", "viewer")).toBe(false);

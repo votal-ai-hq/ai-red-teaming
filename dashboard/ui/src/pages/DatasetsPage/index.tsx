@@ -46,6 +46,7 @@ import {
   ChevronDown,
   ArrowRight,
   Download,
+  Copy,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -218,6 +219,22 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"jsonl" | "csv" | null>(null);
+  const [showEvalCmd, setShowEvalCmd] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Quality datasets are scored by the CLI quality scorer (a different pipeline
+  // than the red-team scan), so we surface the exact command instead of a
+  // launch button.
+  const evalCmd = `npm run eval:quality -- <your-target-config.json> --dataset ${d.path}`;
+  const copyEvalCmd = async () => {
+    try {
+      await navigator.clipboard.writeText(evalCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — the command is visible to copy manually */
+    }
+  };
 
   const doExport = async (format: "jsonl" | "csv") => {
     setExporting(format);
@@ -287,7 +304,7 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {d.kind !== "quality" && (
+          {d.kind !== "quality" ? (
             <Button
               size="sm"
               onClick={() =>
@@ -298,6 +315,35 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
               Use for evaluation
               <ArrowRight className="w-3.5 h-3.5" />
             </Button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setShowEvalCmd((v) => !v)}
+                title="Show the equivalent CLI command"
+              >
+                CLI
+                {showEvalCmd ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate(
+                    `/new-scan?dataset=${encodeURIComponent(d.path)}&mode=quality`,
+                  )
+                }
+                title="Score this dataset against a target from the UI"
+              >
+                Use for evaluation
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           )}
           <Button size="sm" variant="outline" onClick={toggle}>
             {open ? (
@@ -342,6 +388,34 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
           </div>
         </div>
       </div>
+      {d.kind === "quality" && showEvalCmd && (
+        <div className="border-t border-border p-3 space-y-2 text-xs">
+          <p className="text-muted-foreground">
+            Quality datasets are scored on correctness by the CLI quality scorer
+            (a separate pipeline from red-team scans). Point it at the app you're
+            evaluating with a target config, then run:
+          </p>
+          <div className="flex items-start gap-2">
+            <code className="flex-1 rounded bg-muted p-2 break-all font-mono text-[11px]">
+              {evalCmd}
+            </code>
+            <Button size="sm" variant="outline" className="shrink-0" onClick={copyEvalCmd}>
+              {copied ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Replace <code>&lt;your-target-config.json&gt;</code> with a scan
+            config for your app (target URL + auth). Optional flags:{" "}
+            <code>--threshold 0.7</code>, <code>--concurrency 4</code>,{" "}
+            <code>--out report/quality.json</code>.
+          </p>
+        </div>
+      )}
       {open && (
         <div className="border-t border-border p-3 space-y-2 max-h-96 overflow-y-auto">
           {loading && (

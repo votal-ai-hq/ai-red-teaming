@@ -81,13 +81,14 @@ import {
   mergeDatasets,
 } from "../lib/dataset/validate.js";
 import { estimateCost } from "../lib/dataset/cost-estimate.js";
+import { runQualityEval } from "../lib/quality/scorer.js";
 import {
   exportDataset,
   exportContentType,
   isExportFormat,
 } from "../lib/dataset/export.js";
 import { buildRegressionRow, appendRow, type PromoteInput } from "../lib/dataset/promote.js";
-import type { DatasetPreset, DatasetRow } from "../lib/dataset/types.js";
+import type { DatasetPreset, DatasetRow, QualityRow } from "../lib/dataset/types.js";
 import { type ComplianceItem } from "../lib/compliance-mappings.js";
 import {
   loadComplianceFrameworks,
@@ -1762,6 +1763,150 @@ const server = createServer(
       } catch (err) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: run a functional-quality evaluation of a dataset against a target,
+    // streaming per-row PASS/FAIL progress. This ORCHESTRATES the existing
+    // quality scorer (lib/quality/scorer.js) — it doesn't modify it. Body:
+    // { config: <scanner Config>, dataset: <path>, threshold?, concurrency? }.
+    if (url.pathname === "/api/datasets/eval-quality" && req.method === "POST") {
+      let streamStarted = false;
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const body = JSON.parse(await readBody(req)) as {
+          config?: unknown;
+          dataset?: string;
+          threshold?: number;
+          concurrency?: number;
+        };
+        // Load + validate the target config (same shape the New Scan form emits).
+        let config: Config;
+        try {
+          config = loadConfigFromObject(body.config);
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "Invalid configuration",
+              detail: formatErrorDetails(err),
+            }),
+          );
+          return;
+        }
+        // Never run an MCP stdio target on a shared instance unless enabled.
+        if (rejectMcpStdioIfDisabled(config, res)) return;
+        // Path-contained read of the dataset (data/datasets/*.json), mirroring
+        // the row viewer.
+        const rel = String(body.dataset ?? "");
+        const abs = resolvePath(repoRoot, rel);
+        if (
+          !abs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !abs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "dataset must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        if (!existsSync(abs)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
+          return;
+        }
+        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
+        const rawRows = Array.isArray(parsed) ? parsed : [];
+        // Allow the dataset's own (possibly custom) task labels; metric stays
+        // strict (the scorer grades on it).
+        const allowedTasks = rawRows
+          .map((r) =>
+            r && typeof r === "object"
+              ? String((r as Record<string, unknown>).task ?? "").trim()
+              : "",
+          )
+          .filter(Boolean);
+        const { valid, errors } = validateQualityRows(rawRows, { allowedTasks });
+        if (valid.length === 0) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "no valid quality rows to score",
+              invalid: errors.length,
+              sampleErrors: errors.slice(0, 10),
+            }),
+          );
+          return;
+        }
+        const threshold =
+          typeof body.threshold === "number" && Number.isFinite(body.threshold)
+            ? body.threshold
+            : 0.7;
+        const concurrency =
+          typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
+            ? body.concurrency
+            : undefined;
+
+        // Stream per-row progress as NDJSON (same pattern as generate).
+        res.writeHead(200, {
+          "Content-Type": "application/x-ndjson",
+          "Cache-Control": "no-cache",
+          "X-Accel-Buffering": "no",
+        });
+        streamStarted = true;
+        res.write(
+          JSON.stringify({
+            type: "start",
+            total: valid.length,
+            threshold,
+            skipped: errors.length,
+          }) + "\n",
+        );
+
+        const report = await runQualityEval(config, valid as QualityRow[], {
+          passThreshold: threshold,
+          concurrency,
+          dataset: rel,
+          onProgress: (done, total, last) => {
+            res.write(
+              JSON.stringify({
+                type: "row",
+                done,
+                total,
+                metric: last.metric,
+                score: last.score,
+                pass: last.pass,
+                task: last.row?.task,
+                error: last.error,
+              }) + "\n",
+            );
+          },
+        });
+        if (ctx) {
+          await logAudit(ctx, "eval.quality", "dataset", rel, {
+            targetUrl: describeTarget(config),
+            total: report.summary.total,
+            score: report.summary.score,
+            passed: report.summary.passed,
+          });
+        }
+        res.write(JSON.stringify({ type: "done", report }) + "\n");
+        res.end();
+      } catch (err) {
+        if (streamStarted) {
+          res.write(
+            JSON.stringify({
+              type: "error",
+              error: "quality eval failed",
+              detail: formatErrorDetails(err),
+            }) + "\n",
+          );
+          res.end();
+        } else {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+        }
       }
       return;
     }
