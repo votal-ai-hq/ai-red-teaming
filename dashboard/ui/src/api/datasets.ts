@@ -128,6 +128,15 @@ export function listDatasets() {
   return apiFetch<{ datasets: DatasetSummary[] }>("/api/datasets");
 }
 
+/** A single dataset row — shape varies by kind (security vs quality). */
+export type DatasetRow = Record<string, unknown>;
+
+export function getDatasetRows(path: string, limit = 200) {
+  return apiFetch<{ path: string; total: number; rows: DatasetRow[] }>(
+    `/api/datasets/rows?path=${encodeURIComponent(path)}&limit=${limit}`,
+  );
+}
+
 export function generateDataset(body: GenerateDatasetRequest) {
   return apiFetch<GenerateDatasetResponse>("/api/datasets/generate", {
     method: "POST",

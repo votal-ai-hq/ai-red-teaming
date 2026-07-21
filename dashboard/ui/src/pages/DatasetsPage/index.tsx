@@ -6,6 +6,8 @@ import {
   listEvalRuns,
   listGenerationProviders,
   listProfiles,
+  getDatasetRows,
+  type DatasetRow,
   type DatasetSummary,
   type EvalTrend,
   type GenerationProvider,
@@ -31,6 +33,8 @@ import {
   Minus,
   LineChart,
   Wand2,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -135,6 +139,142 @@ function DeltaBadge({ delta }: { delta: number }) {
 
 function datasetLabel(path: string): string {
   return path.replace(/^data\/datasets\//, "");
+}
+
+function str(v: unknown): string {
+  return v == null ? "" : String(v);
+}
+
+/** One dataset row rendered for either kind (security prompt / quality input). */
+function RowItem({ row }: { row: DatasetRow }) {
+  const kindLabel = str(row.category) || str(row.task);
+  const main = str(row.prompt) || str(row.input);
+  const severity = str(row.severity);
+  const criteria = str(row.successCriteria) || str(row.reference);
+  const tools = Array.isArray(row.expectedTools)
+    ? (row.expectedTools as unknown[]).map(String)
+    : [];
+  return (
+    <div className="rounded-md border border-border p-2 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {kindLabel && (
+          <Badge variant="secondary" className="text-[10px]">
+            {kindLabel}
+          </Badge>
+        )}
+        {severity && (
+          <Badge variant="outline" className="text-[10px]">
+            {severity}
+          </Badge>
+        )}
+        {str(row.name) && (
+          <span className="text-[10px] text-muted-foreground truncate">
+            {str(row.name)}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-foreground whitespace-pre-wrap break-words">
+        {main}
+      </p>
+      {criteria && (
+        <p className="text-[11px] text-muted-foreground">
+          <span className="font-medium">grades as success if:</span> {criteria}
+        </p>
+      )}
+      {tools.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          <span className="font-medium">expected tools:</span> {tools.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A dataset summary card that expands to show its rows on demand. */
+function DatasetCard({ d }: { d: DatasetSummary }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<DatasetRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && rows === null) {
+      setLoading(true);
+      setErr(null);
+      try {
+        const res = await getDatasetRows(d.path, 200);
+        setRows(res.rows);
+        setTotal(res.total);
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border">
+      <div className="p-3 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm text-foreground">{d.name}</span>
+            <Badge variant="outline">{d.family}</Badge>
+            <Badge variant={d.kind === "quality" ? "secondary" : "outline"}>
+              {d.kind}
+            </Badge>
+            <Badge>{d.rowCount} rows</Badge>
+          </div>
+          <code className="text-xs text-muted-foreground break-all">{d.path}</code>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {topCategories(d.histogram).map((c) => (
+              <Badge key={c} variant="secondary" className="text-[10px]">
+                {c}
+              </Badge>
+            ))}
+            {Object.keys(d.histogram).length > 4 && (
+              <span className="text-[10px] text-muted-foreground">
+                +{Object.keys(d.histogram).length - 4} more
+              </span>
+            )}
+          </div>
+        </div>
+        <Button size="sm" variant="outline" onClick={toggle} className="shrink-0">
+          {open ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+          View rows
+        </Button>
+      </div>
+      {open && (
+        <div className="border-t border-border p-3 space-y-2 max-h-96 overflow-y-auto">
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading rows…
+            </div>
+          )}
+          {err && <p className="text-xs text-destructive">{err}</p>}
+          {rows && (
+            <>
+              {rows.map((r, i) => (
+                <RowItem key={i} row={r} />
+              ))}
+              {total > rows.length && (
+                <p className="text-[11px] text-muted-foreground pt-1">
+                  Showing first {rows.length} of {total} rows.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function DatasetsPage() {
@@ -728,38 +868,7 @@ export function DatasetsPage() {
           ) : (
             <div className="space-y-3">
               {datasets.map((d) => (
-                <div
-                  key={d.path}
-                  className="rounded-lg border border-border p-3 flex items-start justify-between gap-4"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm text-foreground">
-                        {d.name}
-                      </span>
-                      <Badge variant="outline">{d.family}</Badge>
-                      <Badge variant={d.kind === "quality" ? "secondary" : "outline"}>
-                        {d.kind}
-                      </Badge>
-                      <Badge>{d.rowCount} rows</Badge>
-                    </div>
-                    <code className="text-xs text-muted-foreground break-all">
-                      {d.path}
-                    </code>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {topCategories(d.histogram).map((c) => (
-                        <Badge key={c} variant="secondary" className="text-[10px]">
-                          {c}
-                        </Badge>
-                      ))}
-                      {Object.keys(d.histogram).length > 4 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          +{Object.keys(d.histogram).length - 4} more
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <DatasetCard key={d.path} d={d} />
               ))}
             </div>
           )}

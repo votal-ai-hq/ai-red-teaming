@@ -1644,6 +1644,45 @@ const server = createServer(
       return;
     }
 
+    // API: read the rows of one dataset (for the in-app row viewer).
+    if (url.pathname === "/api/datasets/rows" && req.method === "GET") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const rel = url.searchParams.get("path") || "";
+        const limit = Math.min(
+          Math.max(parseInt(url.searchParams.get("limit") || "200", 10) || 200, 1),
+          1000,
+        );
+        const abs = resolvePath(repoRoot, rel);
+        // Contain reads to data/datasets and to .json files only.
+        if (
+          !abs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !abs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "path must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        if (!existsSync(abs)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `dataset not found: ${rel}` }));
+          return;
+        }
+        const parsed = JSON.parse(readFileSync(abs, "utf-8"));
+        const all = Array.isArray(parsed) ? parsed : [];
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ path: rel, total: all.length, rows: all.slice(0, limit) }),
+        );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
     // API: generate a dataset via NeMo Data Designer.
     // Body: { preset: string, count?: number, out: string, seedFromAnalysisConfig?: object }
     // Requires the Data Designer service (NEMO_DATA_DESIGNER_URL) + a provider
