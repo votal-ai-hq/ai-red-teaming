@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, apiStream } from "./client";
 
 export interface DatasetSummary {
   path: string;
@@ -133,6 +133,56 @@ export function generateDataset(body: GenerateDatasetRequest) {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+// --- streaming generation (OpenAI-direct) ---
+
+export type GenerateStreamEvent =
+  | { type: "start"; total: number; backend: string }
+  | {
+      type: "row";
+      index: number;
+      total: number;
+      category: string;
+      severity?: string;
+      preview: string;
+    }
+  | ({ type: "done" } & GenerateDatasetResponse)
+  | { type: "error"; error: string; detail?: string; sampleErrors?: string[] };
+
+/**
+ * Generate with row-by-row NDJSON streaming. Calls `onEvent` for each event as
+ * it arrives; resolves when the stream ends. Falls back to a normal request if
+ * the server doesn't stream (older build).
+ */
+export async function generateDatasetStream(
+  body: GenerateDatasetRequest,
+  onEvent: (e: GenerateStreamEvent) => void,
+): Promise<void> {
+  const res = await apiStream("/api/datasets/generate", {
+    method: "POST",
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) onEvent(JSON.parse(line) as GenerateStreamEvent);
+    }
+  }
+  const tail = buf.trim();
+  if (tail) onEvent(JSON.parse(tail) as GenerateStreamEvent);
 }
 
 export interface EvalRunPoint {

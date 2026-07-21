@@ -88,6 +88,21 @@ describe("generateWithOpenAI", () => {
     expect(rec.grading).toMatchObject({ reference: expect.any(String) });
   });
 
+  it("fires onRow for each completed row (for live streaming)", async () => {
+    const { chat } = stubChat();
+    const config = buildDataDesignerConfig({ family: "mcp", count: 5 });
+    const seen: { index: number; total: number; hasPrompt: boolean }[] = [];
+    await generateWithOpenAI(config, 5, {
+      chat,
+      concurrency: 2,
+      onRow: (rec, index, total) =>
+        seen.push({ index, total, hasPrompt: typeof (rec as Record<string, unknown>).prompt === "string" }),
+    });
+    expect(seen).toHaveLength(5);
+    expect(seen.every((s) => s.total === 5 && s.hasPrompt)).toBe(true);
+    expect(new Set(seen.map((s) => s.index)).size).toBe(5); // each row once
+  });
+
   it("throws without an API key and without an injected chat", async () => {
     const prev = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
