@@ -8,6 +8,7 @@ import {
   listGenerationEngines,
   getDatasetTaxonomy,
   saveDatasetRows,
+  renameDataset,
   estimateGenerationCost,
   fetchDatasetExport,
   listProfiles,
@@ -47,6 +48,7 @@ import {
   ArrowRight,
   Download,
   Copy,
+  Pencil,
 } from "lucide-react";
 
 const PRESETS: Record<string, string> = {
@@ -211,7 +213,13 @@ function RowItem({ row }: { row: DatasetRow }) {
 }
 
 /** A dataset summary card that expands to show its rows on demand. */
-function DatasetCard({ d }: { d: DatasetSummary }) {
+function DatasetCard({
+  d,
+  onChanged,
+}: {
+  d: DatasetSummary;
+  onChanged: () => void;
+}) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<DatasetRow[] | null>(null);
@@ -221,6 +229,28 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const [exporting, setExporting] = useState<"jsonl" | "csv" | null>(null);
   const [showEvalCmd, setShowEvalCmd] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(d.name);
+  const [savingName, setSavingName] = useState(false);
+
+  const submitRename = async () => {
+    const next = draftName.trim();
+    if (!next || next === d.name) {
+      setRenaming(false);
+      return;
+    }
+    setSavingName(true);
+    setErr(null);
+    try {
+      await renameDataset({ path: d.path, name: next });
+      setRenaming(false);
+      onChanged();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   // Quality datasets are scored by the CLI quality scorer (a different pipeline
   // than the red-team scan), so we surface the exact command instead of a
@@ -282,7 +312,64 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
       <div className="p-3 flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-sm text-foreground">{d.name}</span>
+            {renaming ? (
+              <span className="flex items-center gap-1">
+                <Input
+                  className="h-7 text-sm w-44"
+                  value={draftName}
+                  autoFocus
+                  disabled={savingName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitRename();
+                    if (e.key === "Escape") {
+                      setDraftName(d.name);
+                      setRenaming(false);
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  className="h-7"
+                  onClick={submitRename}
+                  disabled={savingName}
+                >
+                  {savingName ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                  Save
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  disabled={savingName}
+                  onClick={() => {
+                    setDraftName(d.name);
+                    setRenaming(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 group">
+                <span className="font-medium text-sm text-foreground">{d.name}</span>
+                <button
+                  type="button"
+                  title="Rename dataset"
+                  className="text-muted-foreground hover:text-foreground opacity-60 group-hover:opacity-100"
+                  onClick={() => {
+                    setDraftName(d.name);
+                    setRenaming(true);
+                  }}
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+              </span>
+            )}
             <Badge variant="outline">{d.family}</Badge>
             <Badge variant={d.kind === "quality" ? "secondary" : "outline"}>
               {d.kind}
@@ -1495,7 +1582,7 @@ export function DatasetsPage() {
           ) : (
             <div className="space-y-3">
               {datasets.map((d) => (
-                <DatasetCard key={d.path} d={d} />
+                <DatasetCard key={d.path} d={d} onChanged={refresh} />
               ))}
             </div>
           )}

@@ -92,6 +92,7 @@ import {
   readDatasetRowsStore,
   datasetExistsStore,
   saveDatasetStore,
+  renameDatasetStore,
 } from "../lib/dataset/dataset-store.js";
 import {
   exportDataset,
@@ -1761,6 +1762,76 @@ const server = createServer(
             ...(append ? { appended: true, added } : {}),
           }),
         );
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: rename a dataset. Only the file's base name moves — the directory
+    // (and so family/kind) is unchanged. Body: { path, name }.
+    if (url.pathname === "/api/datasets/rename" && req.method === "POST") {
+      try {
+        const repoRoot = join(import.meta.dirname, "..");
+        const tenant = ctx?.tenantId ?? "";
+        const body = JSON.parse(await readBody(req)) as {
+          path?: string;
+          name?: string;
+        };
+        const fromPath = String(body.path ?? "");
+        const fromAbs = resolvePath(repoRoot, fromPath);
+        if (
+          !fromPath ||
+          !fromAbs.startsWith(join(repoRoot, "data", "datasets")) ||
+          !fromAbs.endsWith(".json")
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: "path must be a .json under data/datasets/" }),
+          );
+          return;
+        }
+        // Sanitize to the same charset the generator allows for `out` names.
+        const safeName = String(body.name ?? "")
+          .trim()
+          .replace(/\.json$/i, "")
+          .replace(/[^a-z0-9._-]/gi, "-")
+          // collapse runs and trim separators so "My Name!" -> "My-Name"
+          .replace(/-{2,}/g, "-")
+          .replace(/^[-_.]+|[-_.]+$/g, "");
+        if (!safeName) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "name is required" }));
+          return;
+        }
+        const dir = fromPath.slice(0, fromPath.lastIndexOf("/"));
+        const toPath = `${dir}/${safeName}.json`;
+        if (toPath === fromPath) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ path: fromPath, name: safeName, unchanged: true }));
+          return;
+        }
+        if (await datasetExistsStore(tenant, toPath)) {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: `a dataset named "${safeName}" already exists` }),
+          );
+          return;
+        }
+        const summary = await renameDatasetStore(tenant, fromPath, toPath);
+        if (!summary) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `dataset not found: ${fromPath}` }));
+          return;
+        }
+        if (ctx) {
+          await logAudit(ctx, "dataset.rename", "dataset", fromPath, {
+            to: toPath,
+          });
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ path: summary.path, name: summary.name }));
       } catch (err) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));

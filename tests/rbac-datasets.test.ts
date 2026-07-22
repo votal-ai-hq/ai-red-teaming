@@ -42,6 +42,11 @@ describe("RBAC for dataset/eval endpoints (regression: login-loop 403)", () => {
     expect(checkPermission("POST", "/api/mcp-discover", "viewer")).toBe(false);
     expect(checkPermission("POST", "/api/mcp-discover", "auditor")).toBe(false);
   });
+  it("restricts dataset rename to admin", () => {
+    expect(checkPermission("POST", "/api/datasets/rename", "admin")).toBe(true);
+    expect(checkPermission("POST", "/api/datasets/rename", "viewer")).toBe(false);
+    expect(checkPermission("POST", "/api/datasets/rename", "auditor")).toBe(false);
+  });
   it("restricts curated save to admin", () => {
     expect(checkPermission("POST", "/api/datasets/save", "admin")).toBe(true);
     expect(checkPermission("POST", "/api/datasets/save", "viewer")).toBe(false);
