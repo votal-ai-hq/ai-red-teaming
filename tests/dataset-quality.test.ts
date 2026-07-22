@@ -114,6 +114,39 @@ describe("recordToQualityRow", () => {
     expect(row.expectedTools).toEqual(["a", "b"]);
     expect(validateQualityRows([row]).valid).toHaveLength(1);
   });
+
+  // Regression: a structured reference used to be String()-ed into
+  // "[object Object]" here, before validation — which left judge-scored metrics
+  // (goal_accuracy, faithfulness, …) grading against garbage and always failing.
+  it("keeps a STRUCTURED reference readable instead of [object Object]", () => {
+    const row = recordToQualityRow({
+      task: "goal_completion",
+      metric: "goal_accuracy",
+      input: "get details for findings 101, 202, 303",
+      grading: {
+        reference: {
+          findings: [
+            { id: 101, severity: "high", cwe: "CWE-89" },
+            { id: 202, severity: "low", cwe: "CWE-79" },
+          ],
+        },
+      },
+    });
+    const ref = String(row.reference);
+    expect(ref).not.toContain("[object Object]");
+    expect(ref).toContain("CWE-89");
+    expect(validateQualityRows([row]).valid).toHaveLength(1);
+  });
+
+  it("keeps a plain string reference byte-identical", () => {
+    const row = recordToQualityRow({
+      task: "rag_answer",
+      metric: "faithfulness",
+      input: "q?",
+      grading: { reference: "the refund window is 30 days" },
+    });
+    expect(row.reference).toBe("the refund window is 30 days");
+  });
 });
 
 describe("listDatasets infers kind", () => {
