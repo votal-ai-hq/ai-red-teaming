@@ -30,6 +30,9 @@ import {
   ChevronDown,
   TrendingUp,
   TrendingDown,
+  Copy,
+  Check,
+  Clock,
 } from "lucide-react";
 
 type Status = "live" | "cli" | "planned";
@@ -216,17 +219,126 @@ function shortName(path: string): string {
   return path.split("/").slice(-2).join("/").replace(/\.json$/i, "") || path;
 }
 
-/** A labeled block of monospace text (input / expected / response). */
+// A failing row is one of three very different problems. Separating them is
+// the single most useful thing for a dev: an HTTP/execution failure means the
+// endpoint (their code) is broken; a correctness failure means the endpoint
+// answered fine but the output was wrong (a prompt/logic/quality issue).
+type FailCause = "http" | "error" | "correctness";
+function classify(r: QualityResultRow): FailCause | null {
+  if (r.pass) return null;
+  if (r.error) return "error";
+  if (r.statusCode && (r.statusCode < 200 || r.statusCode >= 300)) return "http";
+  return "correctness";
+}
+const CAUSE_META: Record<
+  FailCause,
+  { label: string; hint: string; cls: string }
+> = {
+  http: {
+    label: "Endpoint (HTTP)",
+    hint: "The endpoint returned a non-2xx status — a transport/server-side failure, not a wrong answer. Start here: it's your code.",
+    cls: "text-destructive border-destructive/40 bg-destructive/10",
+  },
+  error: {
+    label: "Execution error",
+    hint: "The row couldn't be executed or scored (timeout, malformed response, parse failure). Usually the endpoint or the response schema.",
+    cls: "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10",
+  },
+  correctness: {
+    label: "Wrong answer",
+    hint: "The endpoint responded fine (2xx) but the output was scored incorrect — a prompt / logic / quality issue, not a transport bug.",
+    cls: "text-muted-foreground border-border bg-muted",
+  },
+};
+
+function CopyButton({ text, title }: { text: string; title?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      title={title ?? "Copy"}
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1200);
+        } catch {
+          /* clipboard blocked */
+        }
+      }}
+      className="text-muted-foreground hover:text-foreground shrink-0"
+    >
+      {done ? (
+        <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+      ) : (
+        <Copy className="w-3 h-3" />
+      )}
+    </button>
+  );
+}
+
+/** A labeled block of monospace text with a copy button. */
 function TraceField({ label, value }: { label: string; value: string }) {
   if (!value) return null;
   return (
     <div className="space-y-0.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <CopyButton text={value} title={`Copy ${label.toLowerCase()}`} />
+      </div>
       <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-[11px] font-mono max-h-48 overflow-y-auto">
         {value}
       </pre>
+    </div>
+  );
+}
+
+/** Expected vs actual tool calls, with missing (red) and extra (amber) marked. */
+function ToolDiff({
+  expected,
+  actual,
+}: {
+  expected: string[];
+  actual: string[];
+}) {
+  const actSet = new Set(actual);
+  const expSet = new Set(expected);
+  const extra = actual.filter((t) => !expSet.has(t));
+  return (
+    <div className="space-y-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Tool calls (expected vs actual)
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {expected.map((t) => (
+          <span
+            key={`e-${t}`}
+            className={`text-[10px] rounded px-1.5 py-0.5 border ${
+              actSet.has(t)
+                ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                : "border-destructive/50 text-destructive line-through"
+            }`}
+            title={actSet.has(t) ? "called ✓" : "expected but NOT called"}
+          >
+            {actSet.has(t) ? "✓" : "✗"} {t}
+          </span>
+        ))}
+        {extra.map((t) => (
+          <span
+            key={`x-${t}`}
+            className="text-[10px] rounded px-1.5 py-0.5 border border-amber-500/50 text-amber-700 dark:text-amber-300"
+            title="called but NOT expected (extra)"
+          >
+            +{t}
+          </span>
+        ))}
+        {expected.length === 0 && actual.length === 0 && (
+          <span className="text-[10px] text-muted-foreground">no tools</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -235,16 +347,18 @@ function TraceField({ label, value }: { label: string; value: string }) {
  *  full trace so a dev can see exactly why the row passed or failed. */
 function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
   const [open, setOpen] = useState(false);
+  const cause = classify(r);
   const state = r.error ? "ERR" : r.pass ? "PASS" : "FAIL";
   const stateColor = r.error
     ? "text-amber-600 dark:text-amber-400"
     : r.pass
       ? "text-emerald-600 dark:text-emerald-400"
       : "text-destructive";
-  const expected =
-    r.row.expectedTools && r.row.expectedTools.length
-      ? `tools: ${r.row.expectedTools.join(", ")}`
-      : (r.row.reference ?? "");
+  const httpBad = !r.statusCode || r.statusCode < 200 || r.statusCode >= 300;
+  const hasTools =
+    (r.row.expectedTools && r.row.expectedTools.length > 0) ||
+    (r.actualTools && r.actualTools.length > 0);
+  const rowJson = JSON.stringify(r, null, 2);
   return (
     <div className="rounded border border-border">
       <button
@@ -261,8 +375,22 @@ function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
           #{index + 1}
         </span>
         <span className={`font-semibold w-9 shrink-0 ${stateColor}`}>{state}</span>
+        {cause && (
+          <span
+            className={`text-[9px] rounded px-1 py-0.5 border shrink-0 ${CAUSE_META[cause].cls}`}
+            title={CAUSE_META[cause].hint}
+          >
+            {CAUSE_META[cause].label}
+          </span>
+        )}
         <span className="text-muted-foreground shrink-0">{r.metric}</span>
         <span className="tabular-nums shrink-0">{r.score.toFixed(2)}</span>
+        <span
+          className={`tabular-nums shrink-0 ${httpBad ? "text-destructive" : "text-muted-foreground"}`}
+          title="HTTP status"
+        >
+          {r.statusCode || "—"}
+        </span>
         <span className="truncate text-muted-foreground flex-1 min-w-0">
           {r.row.input || r.row.name || ""}
         </span>
@@ -270,23 +398,57 @@ function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
       {open && (
         <div className="border-t border-border p-2 space-y-2">
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-            {r.row.task && <Badge variant="secondary" className="text-[10px]">{r.row.task}</Badge>}
-            <Badge variant="outline" className="text-[10px]">{r.scorer}</Badge>
-            <span>HTTP {r.statusCode}</span>
-            <span>· {r.responseTimeMs} ms</span>
-            <span>· threshold-scored: {r.score.toFixed(2)}</span>
+            {r.row.task && (
+              <Badge variant="secondary" className="text-[10px]">
+                {r.row.task}
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-[10px]">
+              {r.scorer}-scored
+            </Badge>
+            <span className={httpBad ? "text-destructive font-medium" : ""}>
+              HTTP {r.statusCode || "—"}
+            </span>
+            <span className="flex items-center gap-0.5">
+              <Clock className="w-3 h-3" />
+              {r.responseTimeMs} ms
+            </span>
+            <span>· score {r.score.toFixed(2)}</span>
+            <span className="ml-auto flex items-center gap-1">
+              <CopyButton text={rowJson} title="Copy this row as JSON" />
+              copy row JSON
+            </span>
           </div>
-          {r.error && (
-            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
-              <span className="font-semibold">Error: </span>
-              {r.error}
+
+          {cause && (
+            <div
+              className={`rounded border p-2 text-[11px] ${CAUSE_META[cause].cls}`}
+            >
+              <span className="font-semibold">{CAUSE_META[cause].label}: </span>
+              {CAUSE_META[cause].hint}
+              {r.error && (
+                <div className="mt-1 font-mono break-words">{r.error}</div>
+              )}
             </div>
           )}
-          <TraceField label="Input" value={r.row.input ?? ""} />
-          <TraceField label="Expected" value={expected} />
-          <TraceField label="Target response" value={r.response ?? ""} />
-          {r.actualTools && r.actualTools.length > 0 && (
-            <TraceField label="Actual tools" value={r.actualTools.join(", ")} />
+
+          <div className="grid gap-2 md:grid-cols-2">
+            <TraceField label="Input (sent to endpoint)" value={r.row.input ?? ""} />
+            <TraceField
+              label="Expected"
+              value={
+                r.row.expectedTools && r.row.expectedTools.length
+                  ? `tools: ${r.row.expectedTools.join(", ")}`
+                  : (r.row.reference ?? "")
+              }
+            />
+          </div>
+          <TraceField label="Endpoint response" value={r.response ?? ""} />
+          {hasTools && (
+            <ToolDiff
+              expected={r.row.expectedTools ?? []}
+              actual={r.actualTools ?? []}
+            />
           )}
           <TraceField label="Judge reasoning" value={r.reasoning ?? ""} />
         </div>
@@ -295,24 +457,96 @@ function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
   );
 }
 
-/** The per-metric summary + a filterable, expandable list of every row's trace. */
+/** The per-metric summary + a searchable/filterable list of every row's trace. */
 function ReportTrace({ report }: { report: QualityEvalReport }) {
   const [failuresOnly, setFailuresOnly] = useState(false);
+  const [causeFilter, setCauseFilter] = useState<FailCause | null>(null);
+  const [query, setQuery] = useState("");
+
+  // Failure-cause breakdown — the triage summary.
+  const causeCounts = { http: 0, error: 0, correctness: 0 };
+  for (const r of report.results) {
+    const c = classify(r);
+    if (c) causeCounts[c]++;
+  }
+  const failing = report.results.filter((r) => !r.pass).length;
+
+  const q = query.trim().toLowerCase();
   const rows = report.results
     .map((r, i) => ({ r, i }))
-    .filter(({ r }) => !failuresOnly || !r.pass);
+    .filter(({ r }) => {
+      if (failuresOnly && r.pass) return false;
+      if (causeFilter && classify(r) !== causeFilter) return false;
+      if (q) {
+        const hay = [
+          r.row.input,
+          r.response,
+          r.reasoning,
+          r.metric,
+          r.row.task,
+          (r.actualTools ?? []).join(" "),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
   return (
     <>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex flex-wrap gap-1.5">
-          {Object.entries(report.summary.byMetric).map(([m, v]) => (
-            <span
-              key={m}
-              className="text-[11px] rounded border border-border px-1.5 py-0.5"
-            >
-              {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
+      {/* per-metric scores */}
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(report.summary.byMetric).map(([m, v]) => (
+          <span
+            key={m}
+            className="text-[11px] rounded border border-border px-1.5 py-0.5"
+          >
+            {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
+          </span>
+        ))}
+      </div>
+
+      {/* failure triage — click a cause to filter */}
+      {failing > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {failing} failing:
+          </span>
+          {(["http", "error", "correctness"] as FailCause[])
+            .filter((c) => causeCounts[c] > 0)
+            .map((c) => {
+              const active = causeFilter === c;
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  title={CAUSE_META[c].hint}
+                  onClick={() => setCauseFilter(active ? null : c)}
+                  className={`text-[10px] rounded px-1.5 py-0.5 border ${CAUSE_META[c].cls} ${active ? "ring-1 ring-current" : ""}`}
+                >
+                  {CAUSE_META[c].label}: {causeCounts[c]}
+                </button>
+              );
+            })}
+          {(causeCounts.http > 0 || causeCounts.error > 0) && (
+            <span className="text-[10px] text-muted-foreground">
+              ← endpoint/transport issues (your code) vs. wrong answers
             </span>
-          ))}
+          )}
+        </div>
+      )}
+
+      {/* controls */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-48 max-w-md">
+          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            className="w-full h-7 rounded border border-border bg-background pl-7 pr-2 text-xs"
+            placeholder="Search input / response / reasoning / tool…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
           <input
@@ -323,14 +557,23 @@ function ReportTrace({ report }: { report: QualityEvalReport }) {
           Failures only
         </label>
       </div>
+
       <p className="text-[11px] text-muted-foreground">
-        {rows.length} row{rows.length === 1 ? "" : "s"} · click any row to see the
-        full trace (input, expected, response, tools, judge reasoning).
+        {rows.length} of {report.results.length} row
+        {report.results.length === 1 ? "" : "s"}
+        {causeFilter ? ` · ${CAUSE_META[causeFilter].label}` : ""} · click a row
+        for the full trace (input, expected, response, tool diff, judge
+        reasoning).
       </p>
-      <div className="max-h-[28rem] overflow-y-auto space-y-1">
+      <div className="max-h-[32rem] overflow-y-auto space-y-1">
         {rows.map(({ r, i }) => (
           <ResultTrace key={i} r={r} index={i} />
         ))}
+        {rows.length === 0 && (
+          <p className="text-[11px] text-muted-foreground py-2">
+            No rows match the current filter.
+          </p>
+        )}
       </div>
     </>
   );
