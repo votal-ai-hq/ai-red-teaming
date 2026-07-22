@@ -83,6 +83,11 @@ import {
 import { estimateCost } from "../lib/dataset/cost-estimate.js";
 import { runQualityEval } from "../lib/quality/scorer.js";
 import {
+  storeQualityReport,
+  listQualityReports,
+  getQualityReport,
+} from "../lib/quality-report-store.js";
+import {
   listDatasetsStore,
   readDatasetRowsStore,
   datasetExistsStore,
@@ -1896,6 +1901,17 @@ const server = createServer(
             );
           },
         });
+        // Persist the report so it shows up in the Evaluations tab and survives
+        // restarts. Best-effort: a storage hiccup must not fail the eval itself.
+        let savedFilename: string | undefined;
+        try {
+          const saved = await storeQualityReport(report, ctx?.tenantId ?? "");
+          savedFilename = saved.filename;
+        } catch (e) {
+          console.warn(
+            `  [eval] failed to persist quality report: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
         if (ctx) {
           await logAudit(ctx, "eval.quality", "dataset", rel, {
             targetUrl: describeTarget(config),
@@ -1904,7 +1920,9 @@ const server = createServer(
             passed: report.summary.passed,
           });
         }
-        res.write(JSON.stringify({ type: "done", report }) + "\n");
+        res.write(
+          JSON.stringify({ type: "done", report, filename: savedFilename }) + "\n",
+        );
         res.end();
       } catch (err) {
         if (streamStarted) {
@@ -1920,6 +1938,49 @@ const server = createServer(
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: formatErrorDetails(err) }));
         }
+      }
+      return;
+    }
+
+    // API: list persisted quality-eval reports (Evaluations tab).
+    if (url.pathname === "/api/quality-reports" && req.method === "GET") {
+      try {
+        const reports = await listQualityReports(ctx?.tenantId ?? "");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ reports }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
+      }
+      return;
+    }
+
+    // API: fetch one full quality-eval report (per-row detail).
+    if (
+      url.pathname.startsWith("/api/quality-report/") &&
+      req.method === "GET"
+    ) {
+      try {
+        const filename = decodeURIComponent(
+          url.pathname.slice("/api/quality-report/".length),
+        );
+        // Contain to a plain filename (no path traversal).
+        if (!filename || filename.includes("/") || !filename.endsWith(".json")) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid report filename" }));
+          return;
+        }
+        const report = await getQualityReport(filename, ctx?.tenantId ?? "");
+        if (!report) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "report not found" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ report }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: formatErrorDetails(err) }));
       }
       return;
     }

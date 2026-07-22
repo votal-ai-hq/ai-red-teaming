@@ -147,6 +147,16 @@ const PERMISSIONS: RoutePermission[] = [
     roles: ["admin"],
   },
   { method: "GET", pattern: /^\/api\/eval-runs$/, roles: ["admin", "viewer"] },
+  {
+    method: "GET",
+    pattern: /^\/api\/quality-reports$/,
+    roles: ["admin", "viewer"],
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/quality-report\//,
+    roles: ["admin", "viewer"],
+  },
 
   // Audit log
   { method: "GET", pattern: /^\/api\/audit-log/, roles: ["admin", "auditor"] },

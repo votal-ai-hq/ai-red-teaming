@@ -362,6 +362,31 @@ export async function evalQualityStream(
   if (tail) onEvent(JSON.parse(tail) as EvalQualityStreamEvent);
 }
 
+// --- persisted quality-eval reports (Evaluations tab) ---
+
+export interface QualityReportMeta {
+  id: string;
+  filename: string;
+  timestamp: string;
+  dataset: string;
+  targetUrl: string;
+  score: number; // 0..100
+  passed: number;
+  total: number;
+  errors: number;
+  threshold: number;
+}
+
+export function listQualityReports() {
+  return apiFetch<{ reports: QualityReportMeta[] }>("/api/quality-reports");
+}
+
+export function getQualityReport(filename: string) {
+  return apiFetch<{ report: QualityEvalReport }>(
+    `/api/quality-report/${encodeURIComponent(filename)}`,
+  );
+}
+
 export interface EvalRunPoint {
   filename: string;
   timestamp: string;
