@@ -7,6 +7,7 @@ import {
   type Policy,
   type ImportFormat,
 } from "@/api/datasets";
+import { discoverMcp } from "@/api/reference";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,7 @@ import {
   ArrowLeft,
   Plus,
   Trash2,
+  Plug,
 } from "lucide-react";
 
 const IMPORT_FORMATS: { id: ImportFormat; label: string; hint: string; placeholder: string }[] = [
@@ -75,19 +77,34 @@ const emptyProfile: AppProfile = { name: "" };
 
 export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
   const [step, setStep] = useState<Step>("import");
+  const [source, setSource] = useState<"paste" | "mcp">("paste");
   const [format, setFormat] = useState<ImportFormat>("system-prompt");
   const [content, setContent] = useState("");
   const [profile, setProfile] = useState<AppProfile>(emptyProfile);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live MCP auto-detect connection fields.
+  const [mcpTransport, setMcpTransport] = useState<
+    "streamable_http" | "sse" | "stdio"
+  >("streamable_http");
+  const [mcpUrl, setMcpUrl] = useState("");
+  const [mcpBearer, setMcpBearer] = useState("");
+  const [mcpCommand, setMcpCommand] = useState("");
+  const [mcpArgs, setMcpArgs] = useState("");
 
   const reset = () => {
     setStep("import");
+    setSource("paste");
     setFormat("system-prompt");
     setContent("");
     setProfile(emptyProfile);
     setError(null);
     setBusy(false);
+    setMcpTransport("streamable_http");
+    setMcpUrl("");
+    setMcpBearer("");
+    setMcpCommand("");
+    setMcpArgs("");
   };
 
   const close = (o: boolean) => {
@@ -103,6 +120,71 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
     try {
       const { profile: draft } = await importProfile(format, content);
       setProfile({ ...emptyProfile, ...draft, name: profile.name || "" });
+      setStep("review");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Connect to a live MCP server, auto-detect its tools, and seed a draft
+  // profile from them. The profile then tailors dataset generation to those
+  // exact tools (samplers + prompt context).
+  const detectMcp = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const mcp: Record<string, unknown> = { transport: mcpTransport };
+      if (mcpTransport === "stdio") {
+        if (!mcpCommand.trim()) {
+          setError("Enter the command to launch your stdio MCP server.");
+          return;
+        }
+        mcp.command = mcpCommand.trim();
+        mcp.args = mcpArgs.trim() ? mcpArgs.trim().split(/\s+/) : [];
+      } else {
+        if (!mcpUrl.trim()) {
+          setError("Enter your MCP server URL.");
+          return;
+        }
+        mcp.url = mcpUrl.trim();
+        if (mcpBearer.trim())
+          mcp.headers = { Authorization: `Bearer ${mcpBearer.trim()}` };
+      }
+      const config = {
+        target: { type: "mcp", baseUrl: "", agentEndpoint: "", mcp },
+        auth: { methods: ["none"], credentials: [], apiKeys: {} },
+        requestSchema: { messageField: "message", roleField: "role" },
+        responseSchema: { responsePath: "", toolCallsPath: "" },
+        attackConfig: {},
+      };
+      const result = await discoverMcp(config);
+      if (!result.ok) {
+        setError(result.error || "Could not connect to the MCP server.");
+        return;
+      }
+      const tools: ProfileTool[] = (result.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+      }));
+      if (tools.length === 0) {
+        setError("Connected, but the server exposed no tools.");
+        return;
+      }
+      const suggestedName = (result.serverInfo?.name || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      setProfile({
+        ...emptyProfile,
+        name: suggestedName,
+        description: result.serverInfo?.name
+          ? `MCP server: ${result.serverInfo.name}`
+          : "",
+        tools,
+        source: "mcp-discover",
+      });
       setStep("review");
     } catch (e) {
       setError((e as Error).message);
@@ -174,13 +256,118 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
           </DialogTitle>
           <DialogDescription>
             {step === "import"
-              ? "Import an artifact you already have, or skip to enter details by hand. This tailors generated attacks to your app's domain, rules, and tools."
+              ? "Connect to a live MCP server to auto-detect its tools, paste an artifact you already have, or skip to enter details by hand. This tailors generated datasets to your app's domain, rules, and tools."
               : "Review and edit what we found, then save this profile to reuse across datasets."}
           </DialogDescription>
         </DialogHeader>
 
         {step === "import" && (
           <div className="space-y-4">
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant={source === "paste" ? "default" : "outline"}
+                onClick={() => {
+                  setSource("paste");
+                  setError(null);
+                }}
+              >
+                Paste an artifact
+              </Button>
+              <Button
+                size="sm"
+                variant={source === "mcp" ? "default" : "outline"}
+                onClick={() => {
+                  setSource("mcp");
+                  setError(null);
+                }}
+              >
+                <Plug className="w-3.5 h-3.5" />
+                Connect MCP server
+              </Button>
+            </div>
+
+            {source === "mcp" && (
+              <div className="space-y-3 rounded-lg border border-dashed border-border p-3">
+                <p className="text-[11px] text-muted-foreground">
+                  Connect to a live MCP server and we'll auto-detect its tools,
+                  then tailor the generated dataset to exactly those tools.
+                </p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Transport</Label>
+                  <div className="flex flex-wrap gap-1">
+                    {(["streamable_http", "sse", "stdio"] as const).map((t) => (
+                      <Button
+                        key={t}
+                        size="sm"
+                        variant={mcpTransport === t ? "default" : "outline"}
+                        onClick={() => setMcpTransport(t)}
+                      >
+                        {t}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {mcpTransport === "stdio" ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs" htmlFor="mcp-cmd">
+                        Command
+                      </Label>
+                      <Input
+                        id="mcp-cmd"
+                        className="text-xs"
+                        value={mcpCommand}
+                        onChange={(e) => setMcpCommand(e.target.value)}
+                        placeholder="node"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs" htmlFor="mcp-args">
+                        Args (space-separated)
+                      </Label>
+                      <Input
+                        id="mcp-args"
+                        className="text-xs"
+                        value={mcpArgs}
+                        onChange={(e) => setMcpArgs(e.target.value)}
+                        placeholder="./server.js --flag"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <Label className="text-xs" htmlFor="mcp-url">
+                        Server URL
+                      </Label>
+                      <Input
+                        id="mcp-url"
+                        className="text-xs"
+                        value={mcpUrl}
+                        onChange={(e) => setMcpUrl(e.target.value)}
+                        placeholder="https://your-mcp-server.example.com/api/mcp"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs" htmlFor="mcp-bearer">
+                        Bearer token (optional)
+                      </Label>
+                      <Input
+                        id="mcp-bearer"
+                        type="password"
+                        className="text-xs"
+                        value={mcpBearer}
+                        onChange={(e) => setMcpBearer(e.target.value)}
+                        placeholder="sent as Authorization: Bearer …"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {source === "paste" && (
             <div className="space-y-1">
               <Label className="text-xs">Import from</Label>
               <div className="flex flex-wrap gap-1">
@@ -197,6 +384,8 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
               </div>
               <p className="text-[11px] text-muted-foreground">{activeFormat.hint}</p>
             </div>
+            )}
+            {source === "paste" && (
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground">
                 Paste below, or
@@ -222,12 +411,15 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
                 />
               </label>
             </div>
+            )}
+            {source === "paste" && (
             <Textarea
               className="min-h-48 font-mono text-xs"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder={activeFormat.placeholder}
             />
+            )}
             {error && (
               <Alert variant="destructive">
                 <AlertTriangle className="w-4 h-4" />
@@ -436,15 +628,27 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
               <Button variant="ghost" onClick={skipToManual} disabled={busy}>
                 Skip — enter by hand
               </Button>
-              <Button onClick={runImport} disabled={busy || !content.trim()}>
-                {busy ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
-                )}
-                Import
-                <ArrowRight className="w-4 h-4" />
-              </Button>
+              {source === "mcp" ? (
+                <Button onClick={detectMcp} disabled={busy}>
+                  {busy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plug className="w-4 h-4" />
+                  )}
+                  {busy ? "Connecting…" : "Connect & detect tools"}
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              ) : (
+                <Button onClick={runImport} disabled={busy || !content.trim()}>
+                  {busy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Upload className="w-4 h-4" />
+                  )}
+                  Import
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              )}
             </>
           ) : (
             <>

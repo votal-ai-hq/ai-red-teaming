@@ -14,6 +14,10 @@ interface RoutePermission {
 const PERMISSIONS: RoutePermission[] = [
   // Runs
   { method: "POST", pattern: /^\/api\/run$/, roles: ["admin"] },
+  // Connect to a live MCP target and list its tools (scan setup + dataset
+  // auto-detect). Admin-only: it opens an outbound connection to a user-supplied
+  // endpoint (and can spawn a stdio process).
+  { method: "POST", pattern: /^\/api\/mcp-discover$/, roles: ["admin"] },
   { method: "DELETE", pattern: /^\/api\/run\//, roles: ["admin"] },
   { method: "GET", pattern: /^\/api\/run\//, roles: ["admin", "viewer"] },
   { method: "GET", pattern: /^\/api\/runs$/, roles: ["admin", "viewer"] },
