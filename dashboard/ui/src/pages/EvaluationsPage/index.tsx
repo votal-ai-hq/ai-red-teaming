@@ -278,6 +278,21 @@ function CopyButton({ text, title }: { text: string; title?: string }) {
   );
 }
 
+/**
+ * Render any value as readable text. Rows can carry structured references /
+ * responses (and older rows even stored the literal string "[object Object]"),
+ * so never rely on the value already being a string.
+ */
+function asText(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
 /** A labeled block of monospace text with a copy button. */
 function TraceField({ label, value }: { label: string; value: string }) {
   if (!value) return null;
@@ -433,17 +448,17 @@ function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
           )}
 
           <div className="grid gap-2 md:grid-cols-2">
-            <TraceField label="Input (sent to endpoint)" value={r.row.input ?? ""} />
+            <TraceField label="Input (sent to endpoint)" value={asText(r.row.input)} />
             <TraceField
               label="Expected"
               value={
                 r.row.expectedTools && r.row.expectedTools.length
                   ? `tools: ${r.row.expectedTools.join(", ")}`
-                  : (r.row.reference ?? "")
+                  : asText(r.row.reference)
               }
             />
           </div>
-          <TraceField label="Endpoint response" value={r.response ?? ""} />
+          <TraceField label="Endpoint response" value={asText(r.response)} />
           {hasTools && (
             <ToolDiff
               expected={r.row.expectedTools ?? []}
