@@ -15,6 +15,7 @@
 import { executeAttack } from "../attack-runner.js";
 import { extractPath } from "../response-analyzer.js";
 import { describeTarget } from "../target-adapter.js";
+import { runQualityMcpAgent } from "./mcp-agent.js";
 import { DETERMINISTIC_METRICS, scoreDeterministic } from "./metrics.js";
 import { judgeQuality, isJudgeMetric } from "./judge.js";
 import type { Attack, Config } from "../types.js";
@@ -73,16 +74,34 @@ export async function scoreQualityRow(
   passThreshold = DEFAULT_THRESHOLD,
 ): Promise<QualityEvalResult> {
   try {
-    const attack = rowToRequest(config, row, index);
-    const { statusCode, body, timeMs } = await executeAttack(config, attack);
-
-    const responseText = String(
-      extractPath(body, config.responseSchema.responsePath) ?? "",
-    );
-    const actualTools = extractToolNames(
-      body,
-      config.responseSchema.toolCallsPath ?? "",
-    );
+    // MCP targets are JSON-RPC: a plain HTTP body is rejected, so drive the
+    // task through an MCP agent loop (an LLM holding the server's tools) and
+    // grade on the tools it called + its final answer. HTTP/WS targets keep
+    // the direct request path below unchanged.
+    let statusCode: number;
+    let timeMs: number;
+    let responseText: string;
+    let actualTools: string[];
+    if ((config.target.type ?? "http_agent") === "mcp") {
+      const agent = await runQualityMcpAgent(config, row.input);
+      if (agent.error) throw new Error(agent.error);
+      statusCode = agent.statusCode;
+      timeMs = agent.responseTimeMs;
+      responseText = agent.response;
+      actualTools = agent.toolCalls;
+    } else {
+      const attack = rowToRequest(config, row, index);
+      const res = await executeAttack(config, attack);
+      statusCode = res.statusCode;
+      timeMs = res.timeMs;
+      responseText = String(
+        extractPath(res.body, config.responseSchema.responsePath) ?? "",
+      );
+      actualTools = extractToolNames(
+        res.body,
+        config.responseSchema.toolCallsPath ?? "",
+      );
+    }
 
     let score: number;
     let scorer: "deterministic" | "judge";
