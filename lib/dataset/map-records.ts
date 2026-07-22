@@ -6,6 +6,7 @@
  */
 import type { NemoRecord } from "./nemo-client.js";
 import type { DatasetFamily } from "./category-set.js";
+import { toText } from "./to-text.js";
 
 /**
  * A DD record carries one value per column (category, severity, strategy, role,
@@ -21,9 +22,13 @@ export function recordToRow(
   const category = str(rec.category);
   const strategy = str(rec.strategy);
   const surface = str(rec.surface);
+  // Same structured-value hazard as the quality mapper: a grading column may
+  // return an object, and str() would flatten it to "[object Object]" — here
+  // that would corrupt the criteria the grader judges the attack against.
   const successCriteria =
-    str(grading.successCriteria) || str(rec.successCriteria);
-  const expectation = str(grading.expectation) || str(rec.expectation);
+    toText(grading.successCriteria).trim() || toText(rec.successCriteria).trim();
+  const expectation =
+    toText(grading.expectation).trim() || toText(rec.expectation).trim();
 
   const name =
     surface && category
@@ -61,7 +66,11 @@ export function recordToQualityRow(rec: NemoRecord): Record<string, unknown> {
   const grading = (rec.grading ?? {}) as Record<string, unknown>;
   const task = str(rec.task);
   const metric = str(rec.metric);
-  const reference = str(grading.reference) || str(rec.reference);
+  // The grading column can hand back a STRUCTURED reference (an object/array).
+  // str() would flatten it to "[object Object]" here — before validation ever
+  // sees it — which silently destroys the ideal answer the judge grades against
+  // (and made every judge-scored metric, e.g. goal_accuracy, fail).
+  const reference = toText(grading.reference).trim() || toText(rec.reference).trim();
   let expectedTools: string[] = [];
   const raw = grading.expectedTools ?? rec.expectedTools;
   if (Array.isArray(raw)) {
