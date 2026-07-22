@@ -7,6 +7,7 @@ import {
   type DatasetSummary,
   type QualityReportMeta,
   type QualityEvalReport,
+  type QualityResultRow,
 } from "@/api/datasets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -215,6 +216,126 @@ function shortName(path: string): string {
   return path.split("/").slice(-2).join("/").replace(/\.json$/i, "") || path;
 }
 
+/** A labeled block of monospace text (input / expected / response). */
+function TraceField({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <div className="space-y-0.5">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-[11px] font-mono max-h-48 overflow-y-auto">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+/** One result row: a header (PASS/FAIL + metric + score) that expands to the
+ *  full trace so a dev can see exactly why the row passed or failed. */
+function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
+  const [open, setOpen] = useState(false);
+  const state = r.error ? "ERR" : r.pass ? "PASS" : "FAIL";
+  const stateColor = r.error
+    ? "text-amber-600 dark:text-amber-400"
+    : r.pass
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-destructive";
+  const expected =
+    r.row.expectedTools && r.row.expectedTools.length
+      ? `tools: ${r.row.expectedTools.join(", ")}`
+      : (r.row.reference ?? "");
+  return (
+    <div className="rounded border border-border">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs"
+      >
+        {open ? (
+          <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />
+        )}
+        <span className="text-[10px] text-muted-foreground tabular-nums w-6 shrink-0">
+          #{index + 1}
+        </span>
+        <span className={`font-semibold w-9 shrink-0 ${stateColor}`}>{state}</span>
+        <span className="text-muted-foreground shrink-0">{r.metric}</span>
+        <span className="tabular-nums shrink-0">{r.score.toFixed(2)}</span>
+        <span className="truncate text-muted-foreground flex-1 min-w-0">
+          {r.row.input || r.row.name || ""}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-border p-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+            {r.row.task && <Badge variant="secondary" className="text-[10px]">{r.row.task}</Badge>}
+            <Badge variant="outline" className="text-[10px]">{r.scorer}</Badge>
+            <span>HTTP {r.statusCode}</span>
+            <span>· {r.responseTimeMs} ms</span>
+            <span>· threshold-scored: {r.score.toFixed(2)}</span>
+          </div>
+          {r.error && (
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+              <span className="font-semibold">Error: </span>
+              {r.error}
+            </div>
+          )}
+          <TraceField label="Input" value={r.row.input ?? ""} />
+          <TraceField label="Expected" value={expected} />
+          <TraceField label="Target response" value={r.response ?? ""} />
+          {r.actualTools && r.actualTools.length > 0 && (
+            <TraceField label="Actual tools" value={r.actualTools.join(", ")} />
+          )}
+          <TraceField label="Judge reasoning" value={r.reasoning ?? ""} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The per-metric summary + a filterable, expandable list of every row's trace. */
+function ReportTrace({ report }: { report: QualityEvalReport }) {
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const rows = report.results
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => !failuresOnly || !r.pass);
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(report.summary.byMetric).map(([m, v]) => (
+            <span
+              key={m}
+              className="text-[11px] rounded border border-border px-1.5 py-0.5"
+            >
+              {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
+            </span>
+          ))}
+        </div>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={failuresOnly}
+            onChange={(e) => setFailuresOnly(e.target.checked)}
+          />
+          Failures only
+        </label>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {rows.length} row{rows.length === 1 ? "" : "s"} · click any row to see the
+        full trace (input, expected, response, tools, judge reasoning).
+      </p>
+      <div className="max-h-[28rem] overflow-y-auto space-y-1">
+        {rows.map(({ r, i }) => (
+          <ResultTrace key={i} r={r} index={i} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 function QualityRunRow({
   meta,
   delta,
@@ -293,46 +414,7 @@ function QualityRunRow({
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
             </div>
           )}
-          {report && (
-            <>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(report.summary.byMetric).map(([m, v]) => (
-                  <span
-                    key={m}
-                    className="text-[11px] rounded border border-border px-1.5 py-0.5"
-                  >
-                    {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
-                  </span>
-                ))}
-              </div>
-              <div className="max-h-64 overflow-y-auto space-y-1">
-                {(report.results as { metric: string; score: number; pass: boolean; error?: string }[])
-                  .slice(0, 50)
-                  .map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <span
-                        className={
-                          r.error
-                            ? "text-amber-600 dark:text-amber-400"
-                            : r.pass
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-destructive"
-                        }
-                      >
-                        {r.error ? "ERR" : r.pass ? "PASS" : "FAIL"}
-                      </span>
-                      <span className="text-muted-foreground">{r.metric}</span>
-                      <span className="tabular-nums">{r.score.toFixed(2)}</span>
-                    </div>
-                  ))}
-                {report.results.length > 50 && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Showing first 50 of {report.results.length} rows.
-                  </p>
-                )}
-              </div>
-            </>
-          )}
+          {report && <ReportTrace report={report} />}
         </div>
       )}
     </div>
