@@ -88,9 +88,20 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
     "streamable_http" | "sse" | "stdio"
   >("streamable_http");
   const [mcpUrl, setMcpUrl] = useState("");
-  const [mcpBearer, setMcpBearer] = useState("");
   const [mcpCommand, setMcpCommand] = useState("");
   const [mcpArgs, setMcpArgs] = useState("");
+  // How to authenticate to the MCP server. Servers differ: some want
+  // `Authorization: Bearer`, others a named API-key header (x-api-key), others
+  // an arbitrary set of headers.
+  const [mcpAuthMode, setMcpAuthMode] = useState<
+    "none" | "bearer" | "apikey" | "custom"
+  >("none");
+  const [mcpBearer, setMcpBearer] = useState("");
+  const [mcpApiKeyHeader, setMcpApiKeyHeader] = useState("x-api-key");
+  const [mcpApiKeyValue, setMcpApiKeyValue] = useState("");
+  const [mcpHeaders, setMcpHeaders] = useState<{ key: string; value: string }[]>([
+    { key: "", value: "" },
+  ]);
 
   const reset = () => {
     setStep("import");
@@ -102,9 +113,13 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
     setBusy(false);
     setMcpTransport("streamable_http");
     setMcpUrl("");
-    setMcpBearer("");
     setMcpCommand("");
     setMcpArgs("");
+    setMcpAuthMode("none");
+    setMcpBearer("");
+    setMcpApiKeyHeader("x-api-key");
+    setMcpApiKeyValue("");
+    setMcpHeaders([{ key: "", value: "" }]);
   };
 
   const close = (o: boolean) => {
@@ -149,8 +164,17 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
           return;
         }
         mcp.url = mcpUrl.trim();
-        if (mcpBearer.trim())
-          mcp.headers = { Authorization: `Bearer ${mcpBearer.trim()}` };
+        const headers: Record<string, string> = {};
+        if (mcpAuthMode === "bearer" && mcpBearer.trim()) {
+          headers["Authorization"] = `Bearer ${mcpBearer.trim()}`;
+        } else if (mcpAuthMode === "apikey" && mcpApiKeyValue.trim()) {
+          headers[mcpApiKeyHeader.trim() || "x-api-key"] = mcpApiKeyValue.trim();
+        } else if (mcpAuthMode === "custom") {
+          for (const h of mcpHeaders) {
+            if (h.key.trim() && h.value.trim()) headers[h.key.trim()] = h.value.trim();
+          }
+        }
+        if (Object.keys(headers).length > 0) mcp.headers = headers;
       }
       const config = {
         target: { type: "mcp", baseUrl: "", agentEndpoint: "", mcp },
@@ -350,18 +374,130 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs" htmlFor="mcp-bearer">
-                        Bearer token (optional)
-                      </Label>
-                      <Input
-                        id="mcp-bearer"
-                        type="password"
-                        className="text-xs"
-                        value={mcpBearer}
-                        onChange={(e) => setMcpBearer(e.target.value)}
-                        placeholder="sent as Authorization: Bearer …"
-                      />
+                      <Label className="text-xs">Authentication</Label>
+                      <div className="flex flex-wrap gap-1">
+                        {(
+                          [
+                            ["none", "None"],
+                            ["bearer", "Bearer token"],
+                            ["apikey", "API key header"],
+                            ["custom", "Custom headers"],
+                          ] as const
+                        ).map(([id, label]) => (
+                          <Button
+                            key={id}
+                            size="sm"
+                            variant={mcpAuthMode === id ? "default" : "outline"}
+                            onClick={() => setMcpAuthMode(id)}
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
                     </div>
+
+                    {mcpAuthMode === "bearer" && (
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor="mcp-bearer">
+                          Token
+                        </Label>
+                        <Input
+                          id="mcp-bearer"
+                          type="password"
+                          className="text-xs"
+                          value={mcpBearer}
+                          onChange={(e) => setMcpBearer(e.target.value)}
+                          placeholder="sent as Authorization: Bearer …"
+                        />
+                      </div>
+                    )}
+
+                    {mcpAuthMode === "apikey" && (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs" htmlFor="mcp-keyname">
+                            Header name
+                          </Label>
+                          <Input
+                            id="mcp-keyname"
+                            className="text-xs font-mono"
+                            value={mcpApiKeyHeader}
+                            onChange={(e) => setMcpApiKeyHeader(e.target.value)}
+                            placeholder="x-api-key"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs" htmlFor="mcp-keyval">
+                            Key
+                          </Label>
+                          <Input
+                            id="mcp-keyval"
+                            type="password"
+                            className="text-xs"
+                            value={mcpApiKeyValue}
+                            onChange={(e) => setMcpApiKeyValue(e.target.value)}
+                            placeholder="your API key"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {mcpAuthMode === "custom" && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Headers</Label>
+                        {mcpHeaders.map((h, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <Input
+                              className="text-xs font-mono flex-1"
+                              value={h.key}
+                              onChange={(e) =>
+                                setMcpHeaders((hs) =>
+                                  hs.map((x, j) =>
+                                    j === i ? { ...x, key: e.target.value } : x,
+                                  ),
+                                )
+                              }
+                              placeholder="header-name"
+                            />
+                            <Input
+                              type="password"
+                              className="text-xs flex-1"
+                              value={h.value}
+                              onChange={(e) =>
+                                setMcpHeaders((hs) =>
+                                  hs.map((x, j) =>
+                                    j === i ? { ...x, value: e.target.value } : x,
+                                  ),
+                                )
+                              }
+                              placeholder="value"
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setMcpHeaders((hs) =>
+                                  hs.length > 1 ? hs.filter((_, j) => j !== i) : hs,
+                                )
+                              }
+                              title="Remove header"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setMcpHeaders((hs) => [...hs, { key: "", value: "" }])
+                          }
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add header
+                        </Button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
