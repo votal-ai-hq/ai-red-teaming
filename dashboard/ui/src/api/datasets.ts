@@ -196,6 +196,14 @@ export function estimateGenerationCost(params: {
   return apiFetch<CostEstimate>(`/api/datasets/cost?${q.toString()}`);
 }
 
+/** Rename a dataset (its base name only — the family/kind directory is kept). */
+export function renameDataset(body: { path: string; name: string }) {
+  return apiFetch<{ path: string; name: string }>("/api/datasets/rename", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** Fetch a dataset rendered in an interop format (jsonl | csv) as text. */
 export function fetchDatasetExport(path: string, format: "jsonl" | "csv") {
   return apiFetch<string>(

@@ -125,6 +125,11 @@ const PERMISSIONS: RoutePermission[] = [
     roles: ["admin"],
   },
   {
+    method: "POST",
+    pattern: /^\/api\/datasets\/rename$/,
+    roles: ["admin"],
+  },
+  {
     // Runs the quality scorer against a live target — admin-only like /api/run.
     method: "POST",
     pattern: /^\/api\/datasets\/eval-quality$/,

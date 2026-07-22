@@ -16,6 +16,7 @@ import {
   writeFileSync,
   mkdirSync,
   existsSync,
+  renameSync,
   rmSync,
 } from "node:fs";
 import { query, isDbConfigured } from "../db.js";
@@ -141,6 +142,37 @@ export async function saveDatasetStore(
     ],
   );
   return summary;
+}
+
+/**
+ * Rename a dataset (move it to a new logical path). The directory — and so the
+ * family/kind — is unchanged; only the file's base name moves. Callers must
+ * check the destination is free first (datasetExistsStore).
+ */
+export async function renameDatasetStore(
+  tenantId: string,
+  fromPath: string,
+  toPath: string,
+): Promise<DatasetSummary | null> {
+  const name = toPath.split("/").pop()!.replace(/\.json$/i, "");
+  if (!isDbConfigured()) {
+    const fromAbs = absFor(fromPath);
+    const toAbs = absFor(toPath);
+    if (!existsSync(fromAbs)) return null;
+    mkdirSync(dirname(toAbs), { recursive: true });
+    renameSync(fromAbs, toAbs);
+    const parsed = JSON.parse(readFileSync(toAbs, "utf-8"));
+    return summarizeRows(toPath, Array.isArray(parsed) ? parsed : []);
+  }
+  const res = await query<{ one: number }>(
+    `UPDATE datasets SET path = $3, name = $4, updated_at = now()
+      WHERE tenant_id = $1 AND path = $2
+      RETURNING 1 AS one`,
+    [tenantId, fromPath, toPath, name],
+  );
+  if (res.rows.length === 0) return null;
+  const rows = (await readDatasetRowsStore(tenantId, toPath)) ?? [];
+  return summarizeRows(toPath, rows);
 }
 
 /** Delete a dataset from whichever backend holds it. */

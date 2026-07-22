@@ -8,6 +8,7 @@ import {
   listDatasetsStore,
   datasetExistsStore,
   deleteDatasetStore,
+  renameDatasetStore,
   datasetDbEnabled,
 } from "../lib/dataset/dataset-store.js";
 
@@ -69,5 +70,34 @@ describe.skipIf(datasetDbEnabled())("dataset-store (file mode)", () => {
     await deleteDatasetStore(TENANT, PATH);
     expect(await datasetExistsStore(TENANT, PATH)).toBe(false);
     expect(await readDatasetRowsStore(TENANT, PATH)).toBeNull();
+  });
+
+  it("rename moves the dataset, keeps its rows, and frees the old path", async () => {
+    const rows = [
+      { category: "tool_misuse", name: "c1", prompt: "p1", severity: "high", successCriteria: "sc" },
+    ];
+    await saveDatasetStore(TENANT, PATH, rows);
+    const RENAMED = "data/datasets/__store_test__/v2-renamed.json";
+
+    const summary = await renameDatasetStore(TENANT, PATH, RENAMED);
+    expect(summary?.path).toBe(RENAMED);
+    expect(summary?.name).toBe("v2-renamed");
+    expect(summary?.rowCount).toBe(1);
+    // family/kind are derived from the directory, so they survive the rename.
+    expect(summary?.kind).toBe("security");
+
+    expect(await datasetExistsStore(TENANT, RENAMED)).toBe(true);
+    expect(await datasetExistsStore(TENANT, PATH)).toBe(false);
+    const back = await readDatasetRowsStore(TENANT, RENAMED);
+    expect((back![0] as { prompt: string }).prompt).toBe("p1");
+  });
+
+  it("renaming a dataset that doesn't exist returns null", async () => {
+    const missing = await renameDatasetStore(
+      TENANT,
+      "data/datasets/__store_test__/nope.json",
+      "data/datasets/__store_test__/other.json",
+    );
+    expect(missing).toBeNull();
   });
 });
