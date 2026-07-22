@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { isAttackCategory } from "./category-set.js";
 import { isQualityTask, isQualityMetric } from "./quality-set.js";
+import { toText } from "./to-text.js";
 import type {
   DatasetRow,
   QualityRow,
@@ -143,7 +144,9 @@ export function validateQualityRows(
     const task = String(o.task ?? "").trim();
     const input = String(o.input ?? "").trim();
     const metric = String(o.metric ?? "").trim();
-    const reference = String(o.reference ?? "").trim();
+    // A generated reference may come back structured (an object/array). Plain
+    // String() would store it as "[object Object]" and destroy the content.
+    const reference = toText(o.reference).trim();
     const expectedTools = Array.isArray(o.expectedTools)
       ? (o.expectedTools as unknown[]).map((t) => String(t).trim()).filter(Boolean)
       : [];

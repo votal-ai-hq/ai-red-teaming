@@ -16,6 +16,7 @@ import { executeAttack } from "../attack-runner.js";
 import { extractPath } from "../response-analyzer.js";
 import { describeTarget } from "../target-adapter.js";
 import { runQualityMcpAgent } from "./mcp-agent.js";
+import { extractResponseText } from "./response-text.js";
 import { DETERMINISTIC_METRICS, scoreDeterministic } from "./metrics.js";
 import { judgeQuality, isJudgeMetric } from "./judge.js";
 import type { Attack, Config } from "../types.js";
@@ -94,8 +95,11 @@ export async function scoreQualityRow(
       const res = await executeAttack(config, attack);
       statusCode = res.statusCode;
       timeMs = res.timeMs;
-      responseText = String(
-        extractPath(res.body, config.responseSchema.responsePath) ?? "",
+      // Targets answer in arbitrary shapes (and may stream) — resolve the
+      // configured path first, then common envelopes, never "[object Object]".
+      responseText = extractResponseText(
+        res.body,
+        config.responseSchema.responsePath,
       );
       actualTools = extractToolNames(
         res.body,
