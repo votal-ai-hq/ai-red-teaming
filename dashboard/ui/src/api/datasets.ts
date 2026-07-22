@@ -289,6 +289,33 @@ export async function generateDatasetStream(
 
 // --- streaming quality evaluation (dataset scored against a target) ---
 
+/** One scored row of a quality eval — the full trace for debugging. */
+export interface QualityResultRow {
+  row: {
+    task?: string;
+    name?: string;
+    input?: string;
+    reference?: string;
+    expectedTools?: string[];
+    metric?: string;
+    note?: string;
+  };
+  score: number;
+  pass: boolean;
+  metric: string;
+  scorer: "deterministic" | "judge";
+  /** The target's response text (truncated in the report). */
+  response: string;
+  /** Tool calls the target actually made (tool-call metrics). */
+  actualTools?: string[];
+  statusCode: number;
+  responseTimeMs: number;
+  /** Judge reasoning (judge-scored rows only). */
+  reasoning?: string;
+  /** Set when the row could not be executed/scored. */
+  error?: string;
+}
+
 export interface QualityEvalReport {
   timestamp: string;
   targetUrl: string;
@@ -303,7 +330,7 @@ export interface QualityEvalReport {
     byMetric: Record<string, { count: number; mean: number; passed: number }>;
     byTask: Record<string, { count: number; mean: number; passed: number }>;
   };
-  results: unknown[];
+  results: QualityResultRow[];
 }
 
 export type EvalQualityStreamEvent =
