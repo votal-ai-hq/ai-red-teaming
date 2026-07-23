@@ -438,6 +438,8 @@ export interface McpTargetConfig {
 }
 
 export interface Config {
+  /** Optional user-given name for this scan (shown in Scan Activity). */
+  name?: string;
   target: {
     /** Execution target type. Defaults to "http_agent". */
     type?: TargetType;

@@ -11,6 +11,13 @@ export function getRun(id: string, since = 0, includeConfig = false) {
   return apiFetch<RunDetail>(`/api/run/${id}?${params}`);
 }
 
+export function renameRun(id: string, name: string) {
+  return apiFetch<{ runId: string; name: string | null }>(`/api/run/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function createRun(config: Record<string, unknown>) {
   return apiFetch<{ runId: string; status: string; estimatedTotal?: number }>(
     "/api/run",
