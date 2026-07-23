@@ -28,6 +28,7 @@ import {
   Loader2,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   TrendingUp,
   TrendingDown,
   Copy,
@@ -293,18 +294,50 @@ function asText(v: unknown): string {
   }
 }
 
-/** A labeled block of monospace text with a copy button. */
-function TraceField({ label, value }: { label: string; value: string }) {
+/** Row state — the single most important at-a-glance signal. */
+type RowState = "PASS" | "FAIL" | "ERR";
+function rowState(r: QualityResultRow): RowState {
+  return r.error ? "ERR" : r.pass ? "PASS" : "FAIL";
+}
+const STATE_STYLE: Record<RowState, string> = {
+  PASS: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/30",
+  FAIL: "bg-destructive/10 text-destructive border-destructive/40",
+  ERR: "bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/30",
+};
+
+/** The colored PASS / FAIL / ERR chip, used in the list and the detail header. */
+function StatePill({ state }: { state: RowState }) {
+  return (
+    <span
+      className={`inline-flex items-center text-[10.5px] font-bold tracking-wide px-1.5 py-0.5 rounded-md border ${STATE_STYLE[state]}`}
+    >
+      {state}
+    </span>
+  );
+}
+
+/** A labeled field block — generous spacing, readable monospace. */
+function TraceField({
+  label,
+  value,
+  mono = true,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   if (!value) return null;
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {label}
         </span>
         <CopyButton text={value} title={`Copy ${label.toLowerCase()}`} />
       </div>
-      <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-[11px] font-mono max-h-48 overflow-y-auto">
+      <pre
+        className={`whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-3 text-[12.5px] leading-relaxed max-h-72 overflow-y-auto ${mono ? "font-mono" : ""}`}
+      >
         {value}
       </pre>
     </div>
@@ -323,18 +356,18 @@ function ToolDiff({
   const expSet = new Set(expected);
   const extra = actual.filter((t) => !expSet.has(t));
   return (
-    <div className="space-y-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="space-y-1.5">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         Tool calls (expected vs actual)
       </span>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-1.5">
         {expected.map((t) => (
           <span
             key={`e-${t}`}
-            className={`text-[10px] rounded px-1.5 py-0.5 border ${
+            className={`text-[11px] font-mono rounded-md px-2 py-1 border ${
               actSet.has(t)
-                ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                : "border-destructive/50 text-destructive line-through"
+                ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                : "border-destructive/50 bg-destructive/5 text-destructive line-through"
             }`}
             title={actSet.has(t) ? "called ✓" : "expected but NOT called"}
           >
@@ -344,139 +377,270 @@ function ToolDiff({
         {extra.map((t) => (
           <span
             key={`x-${t}`}
-            className="text-[10px] rounded px-1.5 py-0.5 border border-amber-500/50 text-amber-700 dark:text-amber-300"
+            className="text-[11px] font-mono rounded-md px-2 py-1 border border-amber-500/50 bg-amber-500/5 text-amber-700 dark:text-amber-300"
             title="called but NOT expected (extra)"
           >
             +{t}
           </span>
         ))}
         {expected.length === 0 && actual.length === 0 && (
-          <span className="text-[10px] text-muted-foreground">no tools</span>
+          <span className="text-[11px] text-muted-foreground">no tools</span>
         )}
       </div>
     </div>
   );
 }
 
-/** One result row: a header (PASS/FAIL + metric + score) that expands to the
- *  full trace so a dev can see exactly why the row passed or failed. */
-function ResultTrace({ r, index }: { r: QualityResultRow; index: number }) {
-  const [open, setOpen] = useState(false);
+/** Left column: one scannable record in the list. Selecting it (not expanding)
+ *  loads the full trace into the detail panel on the right. */
+function RecordListItem({
+  r,
+  index,
+  active,
+  onSelect,
+}: {
+  r: QualityResultRow;
+  index: number;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const state = rowState(r);
   const cause = classify(r);
-  const state = r.error ? "ERR" : r.pass ? "PASS" : "FAIL";
-  const stateColor = r.error
-    ? "text-amber-600 dark:text-amber-400"
-    : r.pass
-      ? "text-emerald-600 dark:text-emerald-400"
-      : "text-destructive";
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={active}
+      className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
+        active
+          ? "border-primary/50 bg-primary/5 ring-1 ring-primary/20"
+          : "border-border hover:bg-muted/50"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] tabular-nums text-muted-foreground w-7 shrink-0">
+          #{index + 1}
+        </span>
+        <StatePill state={state} />
+        {cause && (
+          <span
+            className={`text-[10px] rounded px-1.5 py-0.5 border shrink-0 ${CAUSE_META[cause].cls}`}
+            title={CAUSE_META[cause].hint}
+          >
+            {CAUSE_META[cause].label}
+          </span>
+        )}
+        <span className="ml-auto text-[11px] font-semibold tabular-nums text-muted-foreground shrink-0">
+          {r.score.toFixed(2)}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[12.5px] leading-snug text-foreground/90 line-clamp-2">
+        {r.row.input || r.row.name || "—"}
+      </p>
+      <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-muted-foreground">
+        <span className="font-mono">{r.metric}</span>
+        <span aria-hidden>·</span>
+        <span>{r.scorer}</span>
+        {r.statusCode ? (
+          <>
+            <span aria-hidden>·</span>
+            <span
+              className={
+                r.statusCode < 200 || r.statusCode >= 300
+                  ? "text-destructive font-medium"
+                  : ""
+              }
+            >
+              {r.statusCode}
+            </span>
+          </>
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+/** Right column: the full trace for the selected record — every field laid out
+ *  with room to breathe, plus prev/next so you can walk the whole run. */
+function RecordDetail({
+  r,
+  index,
+  position,
+  total,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+}: {
+  r: QualityResultRow;
+  index: number;
+  position: number;
+  total: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const state = rowState(r);
+  const cause = classify(r);
   const httpBad = !r.statusCode || r.statusCode < 200 || r.statusCode >= 300;
   const hasTools =
     (r.row.expectedTools && r.row.expectedTools.length > 0) ||
     (r.actualTools && r.actualTools.length > 0);
   const rowJson = JSON.stringify(r, null, 2);
   return (
-    <div className="rounded border border-border">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs"
-      >
-        {open ? (
-          <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />
-        )}
-        <span className="text-[10px] text-muted-foreground tabular-nums w-6 shrink-0">
+    <div className="rounded-xl border border-border bg-card">
+      {/* header: identity + navigation */}
+      <div className="flex items-center gap-2 flex-wrap border-b border-border px-4 py-3">
+        <span className="text-sm font-semibold tabular-nums text-muted-foreground">
           #{index + 1}
         </span>
-        <span className={`font-semibold w-9 shrink-0 ${stateColor}`}>{state}</span>
+        <StatePill state={state} />
         {cause && (
           <span
-            className={`text-[9px] rounded px-1 py-0.5 border shrink-0 ${CAUSE_META[cause].cls}`}
+            className={`text-[11px] rounded-md px-2 py-0.5 border ${CAUSE_META[cause].cls}`}
             title={CAUSE_META[cause].hint}
           >
             {CAUSE_META[cause].label}
           </span>
         )}
-        <span className="text-muted-foreground shrink-0">{r.metric}</span>
-        <span className="tabular-nums shrink-0">{r.score.toFixed(2)}</span>
-        <span
-          className={`tabular-nums shrink-0 ${httpBad ? "text-destructive" : "text-muted-foreground"}`}
-          title="HTTP status"
-        >
-          {r.statusCode || "—"}
+        <span className="font-mono text-xs text-foreground">{r.metric}</span>
+        <span className="text-xs text-muted-foreground">
+          score{" "}
+          <span className="font-semibold tabular-nums text-foreground">
+            {r.score.toFixed(2)}
+          </span>
         </span>
-        <span className="truncate text-muted-foreground flex-1 min-w-0">
-          {r.row.input || r.row.name || ""}
-        </span>
-      </button>
-      {open && (
-        <div className="border-t border-border p-2 space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-            {r.row.task && (
-              <Badge variant="secondary" className="text-[10px]">
-                {r.row.task}
-              </Badge>
-            )}
-            <Badge variant="outline" className="text-[10px]">
-              {r.scorer}-scored
-            </Badge>
-            <span className={httpBad ? "text-destructive font-medium" : ""}>
-              HTTP {r.statusCode || "—"}
-            </span>
-            <span className="flex items-center gap-0.5">
-              <Clock className="w-3 h-3" />
-              {r.responseTimeMs} ms
-            </span>
-            <span>· score {r.score.toFixed(2)}</span>
-            <span className="ml-auto flex items-center gap-1">
-              <CopyButton text={rowJson} title="Copy this row as JSON" />
-              copy row JSON
-            </span>
-          </div>
-
-          {cause && (
-            <div
-              className={`rounded border p-2 text-[11px] ${CAUSE_META[cause].cls}`}
-            >
-              <span className="font-semibold">{CAUSE_META[cause].label}: </span>
-              {CAUSE_META[cause].hint}
-              {r.error && (
-                <div className="mt-1 font-mono break-words">{r.error}</div>
-              )}
-            </div>
-          )}
-
-          <div className="grid gap-2 md:grid-cols-2">
-            <TraceField label="Input (sent to endpoint)" value={asText(r.row.input)} />
-            <TraceField
-              label="Expected"
-              value={
-                r.row.expectedTools && r.row.expectedTools.length
-                  ? `tools: ${r.row.expectedTools.join(", ")}`
-                  : asText(r.row.reference)
-              }
-            />
-          </div>
-          <TraceField label="Endpoint response" value={asText(r.response)} />
-          {hasTools && (
-            <ToolDiff
-              expected={r.row.expectedTools ?? []}
-              actual={r.actualTools ?? []}
-            />
-          )}
-          <TraceField label="Judge reasoning" value={r.reasoning ?? ""} />
+        <div className="ml-auto flex items-center gap-1">
+          <span className="text-[11px] tabular-nums text-muted-foreground mr-1">
+            {position} / {total}
+          </span>
+          <button
+            type="button"
+            onClick={onPrev}
+            disabled={!hasPrev}
+            title="Previous record (↑)"
+            className="grid place-items-center w-7 h-7 rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <ChevronUp className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={!hasNext}
+            title="Next record (↓)"
+            className="grid place-items-center w-7 h-7 rounded-md border border-border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <ChevronDown className="w-4 h-4" />
+          </button>
         </div>
-      )}
+      </div>
+
+      {/* meta strip */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border px-4 py-2.5 text-[11.5px] text-muted-foreground">
+        {r.row.task && (
+          <Badge variant="secondary" className="text-[10.5px]">
+            {r.row.task}
+          </Badge>
+        )}
+        <Badge variant="outline" className="text-[10.5px]">
+          {r.scorer}-scored
+        </Badge>
+        <span
+          className={`flex items-center gap-1 ${httpBad ? "text-destructive font-medium" : ""}`}
+        >
+          HTTP {r.statusCode || "—"}
+        </span>
+        <span className="flex items-center gap-1">
+          <Clock className="w-3.5 h-3.5" />
+          {r.responseTimeMs} ms
+        </span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <CopyButton text={rowJson} title="Copy this record as JSON" />
+          copy JSON
+        </span>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* why it failed */}
+        {cause && (
+          <div className={`rounded-lg border p-3 text-[12px] leading-relaxed ${CAUSE_META[cause].cls}`}>
+            <span className="font-semibold">{CAUSE_META[cause].label}: </span>
+            {CAUSE_META[cause].hint}
+            {r.error && (
+              <div className="mt-1.5 font-mono break-words text-[11.5px]">
+                {r.error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* the fields, top to bottom in the order you read them */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TraceField label="Input (sent to endpoint)" value={asText(r.row.input)} />
+          <TraceField
+            label="Expected"
+            value={
+              r.row.expectedTools && r.row.expectedTools.length
+                ? `tools: ${r.row.expectedTools.join(", ")}`
+                : asText(r.row.reference)
+            }
+          />
+        </div>
+        <TraceField label="Endpoint response" value={asText(r.response)} />
+        {hasTools && (
+          <ToolDiff
+            expected={r.row.expectedTools ?? []}
+            actual={r.actualTools ?? []}
+          />
+        )}
+        <TraceField label="Judge reasoning" value={r.reasoning ?? ""} />
+      </div>
     </div>
   );
 }
 
-/** The per-metric summary + a searchable/filterable list of every row's trace. */
+/** A compact stat tile for the per-metric summary strip. */
+function MetricStat({
+  name,
+  mean,
+  passed,
+  count,
+}: {
+  name: string;
+  mean: number;
+  passed: number;
+  count: number;
+}) {
+  const pct = Math.round(mean * 100);
+  const tone =
+    pct >= 80
+      ? "text-emerald-600 dark:text-emerald-400"
+      : pct >= 50
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-destructive";
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2 min-w-[9rem]">
+      <div className="text-[10.5px] font-mono text-muted-foreground truncate" title={name}>
+        {name}
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className={`text-lg font-semibold tabular-nums ${tone}`}>{pct}%</span>
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {passed}/{count}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** The per-metric summary + a master–detail records browser: a scannable list
+ *  on the left, the full trace of the selected record on the right. */
 function ReportTrace({ report }: { report: QualityEvalReport }) {
   const [failuresOnly, setFailuresOnly] = useState(false);
   const [causeFilter, setCauseFilter] = useState<FailCause | null>(null);
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(0); // index into report.results
 
   // Failure-cause breakdown — the triage summary.
   const causeCounts = { http: 0, error: 0, correctness: 0 };
@@ -508,44 +672,48 @@ function ReportTrace({ report }: { report: QualityEvalReport }) {
       return true;
     });
 
+  // Keep a valid selection: if the filtered list no longer contains it, fall
+  // back to the first visible record. `pos` is the selection's spot in the
+  // *filtered* list, which is what prev/next walk through.
+  const visiblePos = rows.findIndex((x) => x.i === selected);
+  const pos = visiblePos >= 0 ? visiblePos : 0;
+  const active = rows[pos] ?? null;
+  const goPrev = () => pos > 0 && setSelected(rows[pos - 1].i);
+  const goNext = () => pos < rows.length - 1 && setSelected(rows[pos + 1].i);
+
   return (
-    <>
+    <div className="space-y-4">
       {/* per-metric scores */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {Object.entries(report.summary.byMetric).map(([m, v]) => (
-          <span
-            key={m}
-            className="text-[11px] rounded border border-border px-1.5 py-0.5"
-          >
-            {m}: {(v.mean * 100).toFixed(0)}% ({v.passed}/{v.count})
-          </span>
+          <MetricStat key={m} name={m} mean={v.mean} passed={v.passed} count={v.count} />
         ))}
       </div>
 
       {/* failure triage — click a cause to filter */}
       {failing > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {failing} failing:
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {failing} failing
           </span>
           {(["http", "error", "correctness"] as FailCause[])
             .filter((c) => causeCounts[c] > 0)
             .map((c) => {
-              const active = causeFilter === c;
+              const on = causeFilter === c;
               return (
                 <button
                   key={c}
                   type="button"
                   title={CAUSE_META[c].hint}
-                  onClick={() => setCauseFilter(active ? null : c)}
-                  className={`text-[10px] rounded px-1.5 py-0.5 border ${CAUSE_META[c].cls} ${active ? "ring-1 ring-current" : ""}`}
+                  onClick={() => setCauseFilter(on ? null : c)}
+                  className={`text-[11px] rounded-md px-2 py-1 border ${CAUSE_META[c].cls} ${on ? "ring-1 ring-current" : ""}`}
                 >
                   {CAUSE_META[c].label}: {causeCounts[c]}
                 </button>
               );
             })}
           {(causeCounts.http > 0 || causeCounts.error > 0) && (
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[11px] text-muted-foreground">
               ← endpoint/transport issues (your code) vs. wrong answers
             </span>
           )}
@@ -554,16 +722,16 @@ function ReportTrace({ report }: { report: QualityEvalReport }) {
 
       {/* controls */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-48 max-w-md">
-          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative flex-1 min-w-52 max-w-md">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
-            className="w-full h-7 rounded border border-border bg-background pl-7 pr-2 text-xs"
+            className="w-full h-9 rounded-md border border-border bg-background pl-8 pr-2 text-[13px]"
             placeholder="Search input / response / reasoning / tool…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
           <input
             type="checkbox"
             checked={failuresOnly}
@@ -573,24 +741,48 @@ function ReportTrace({ report }: { report: QualityEvalReport }) {
         </label>
       </div>
 
-      <p className="text-[11px] text-muted-foreground">
-        {rows.length} of {report.results.length} row
+      <p className="text-xs text-muted-foreground">
+        {rows.length} of {report.results.length} record
         {report.results.length === 1 ? "" : "s"}
-        {causeFilter ? ` · ${CAUSE_META[causeFilter].label}` : ""} · click a row
-        for the full trace (input, expected, response, tool diff, judge
-        reasoning).
+        {causeFilter ? ` · ${CAUSE_META[causeFilter].label}` : ""} · select a
+        record to see its full trace
       </p>
-      <div className="max-h-[32rem] overflow-y-auto space-y-1">
-        {rows.map(({ r, i }) => (
-          <ResultTrace key={i} r={r} index={i} />
-        ))}
-        {rows.length === 0 && (
-          <p className="text-[11px] text-muted-foreground py-2">
-            No rows match the current filter.
-          </p>
-        )}
-      </div>
-    </>
+
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center">
+          No records match the current filter.
+        </p>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+          {/* master: the record list */}
+          <div className="lg:max-h-[38rem] overflow-y-auto space-y-1.5 pr-0.5">
+            {rows.map(({ r, i }) => (
+              <RecordListItem
+                key={i}
+                r={r}
+                index={i}
+                active={i === active?.i}
+                onSelect={() => setSelected(i)}
+              />
+            ))}
+          </div>
+
+          {/* detail: the selected record's full trace */}
+          {active && (
+            <RecordDetail
+              r={active.r}
+              index={active.i}
+              position={pos + 1}
+              total={rows.length}
+              hasPrev={pos > 0}
+              hasNext={pos < rows.length - 1}
+              onPrev={goPrev}
+              onNext={goNext}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
