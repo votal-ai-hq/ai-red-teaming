@@ -529,6 +529,67 @@ function DatasetCard({
   );
 }
 
+/** A segmented control — grouped pill toggles in a single track. */
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  className = "",
+}: {
+  options: { value: T; label: string; title?: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`inline-flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1 ${className}`}
+    >
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            title={o.title}
+            onClick={() => onChange(o.value)}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              active
+                ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A labeled form field with consistent spacing and an optional hint. */
+function Field({
+  label,
+  hint,
+  children,
+  className = "",
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </Label>
+      {children}
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
 export function DatasetsPage() {
   const navigate = useNavigate();
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
@@ -910,86 +971,54 @@ export function DatasetsPage() {
             Generate a dataset
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="space-y-1">
-              <Label className="text-xs">Kind</Label>
-              <div className="flex gap-1">
-                {(["security", "quality"] as const).map((k) => (
-                  <Button
-                    key={k}
-                    size="sm"
-                    variant={kind === k ? "default" : "outline"}
-                    onClick={() => setKind(k)}
-                  >
-                    {k}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Family</Label>
-              <div className="flex gap-1">
-                {(["mcp", "agent"] as const).map((f) => (
-                  <Button
-                    key={f}
-                    size="sm"
-                    variant={family === f ? "default" : "outline"}
-                    onClick={() => setFamily(f)}
-                  >
-                    {f}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Engine</Label>
-              <div className="flex flex-wrap gap-1">
-                {engines.map((e) => (
-                  <Button
-                    key={e.id}
-                    size="sm"
-                    variant={engine === e.id ? "default" : "outline"}
-                    onClick={() => selectEngine(e.id)}
-                    title={`Generate directly via ${e.label}${e.apiKeyEnv ? ` (needs ${e.apiKeyEnv})` : " (local, no key)"}`}
-                  >
-                    {e.label}
-                  </Button>
-                ))}
-                <Button
-                  size="sm"
-                  variant={engine === "data-designer" ? "default" : "outline"}
-                  onClick={() => selectEngine("data-designer")}
-                  title="Generate via the NeMo Data Designer microservice"
-                >
-                  Data Designer
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Conversation</Label>
-              <div className="flex items-center gap-1">
-                {(["single", "multi"] as const).map((m) => (
-                  <Button
-                    key={m}
-                    size="sm"
-                    variant={turnMode === m ? "default" : "outline"}
-                    onClick={() => setTurnMode(m)}
-                    title={
-                      m === "single"
-                        ? "One message per case"
-                        : kind === "security"
+        <CardContent className="space-y-5">
+          {/* Blueprint — what kind of dataset */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Kind">
+              <Segmented
+                options={[
+                  { value: "security", label: "Security" },
+                  { value: "quality", label: "Quality" },
+                ]}
+                value={kind}
+                onChange={setKind}
+              />
+            </Field>
+            <Field label="Family">
+              <Segmented
+                options={[
+                  { value: "mcp", label: "MCP" },
+                  { value: "agent", label: "Agent" },
+                ]}
+                value={family}
+                onChange={setFamily}
+              />
+            </Field>
+            <Field label="Conversation">
+              <div className="flex items-center gap-2">
+                <Segmented
+                  options={[
+                    {
+                      value: "single",
+                      label: "Single-turn",
+                      title: "One message per case",
+                    },
+                    {
+                      value: "multi",
+                      label: "Multi-turn",
+                      title:
+                        kind === "security"
                           ? "A [Turn N] escalation transcript"
-                          : "A [Turn N] multi-step task conversation"
-                    }
-                  >
-                    {m === "single" ? "single-turn" : "multi-turn"}
-                  </Button>
-                ))}
+                          : "A [Turn N] multi-step task conversation",
+                    },
+                  ]}
+                  value={turnMode}
+                  onChange={setTurnMode}
+                />
                 {turnMode === "multi" && (
                   <Input
                     type="number"
-                    className="w-16"
+                    className="w-16 h-9"
                     min={2}
                     max={8}
                     value={maxTurns}
@@ -1002,32 +1031,53 @@ export function DatasetsPage() {
                   />
                 )}
               </div>
-            </div>
+            </Field>
+          </div>
+
+          {/* Engine + provider — where rows are generated */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Engine" hint="Where the rows are generated">
+              <Segmented
+                options={[
+                  ...engines.map((e) => ({
+                    value: e.id,
+                    label: e.label,
+                    title: `Generate directly via ${e.label}${e.apiKeyEnv ? ` (needs ${e.apiKeyEnv})` : " (local, no key)"}`,
+                  })),
+                  {
+                    value: "data-designer",
+                    label: "Data Designer",
+                    title: "Generate via the NeMo Data Designer microservice",
+                  },
+                ]}
+                value={engine}
+                onChange={selectEngine}
+              />
+            </Field>
             {!isDirect && (
-              <div className="space-y-1">
-                <Label className="text-xs">Provider</Label>
-                <div className="flex gap-1">
-                  {providers.map((p) => (
-                    <Button
-                      key={p.id}
-                      size="sm"
-                      variant={providerId === p.id ? "default" : "outline"}
-                      onClick={() => selectProvider(p)}
-                      title={`Generate with ${p.label} (needs ${p.apiKeyEnv})`}
-                    >
-                      {p.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
+              <Field label="Provider">
+                <Segmented
+                  options={providers.map((p) => ({
+                    value: p.id,
+                    label: p.label,
+                    title: `Generate with ${p.label} (needs ${p.apiKeyEnv})`,
+                  }))}
+                  value={providerId}
+                  onChange={(id) => {
+                    const p = providers.find((x) => x.id === id);
+                    if (p) selectProvider(p);
+                  }}
+                />
+              </Field>
             )}
-            <div className="space-y-1">
-              <Label className="text-xs" htmlFor="model">
-                Model
-              </Label>
+          </div>
+
+          {/* Model, size, name */}
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem_10rem] lg:max-w-3xl">
+            <Field label="Model">
               <Input
                 id="model"
-                className="w-64 font-mono text-xs"
+                className="font-mono text-xs h-9"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder={effInfo.defaultModel}
@@ -1038,32 +1088,30 @@ export function DatasetsPage() {
                   <option key={m} value={m} />
                 ))}
               </datalist>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs" htmlFor="count">
-                Rows
-              </Label>
+            </Field>
+            <Field label="Rows">
               <Input
                 id="count"
                 type="number"
-                className="w-28"
+                className="h-9"
                 value={count}
                 min={1}
                 onChange={(e) => setCount(Number(e.target.value))}
               />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs" htmlFor="out">
-                Version name
-              </Label>
+            </Field>
+            <Field label="Version name">
               <Input
                 id="out"
-                className="w-40"
+                className="h-9"
                 value={outName}
                 onChange={(e) => setOutName(e.target.value)}
                 placeholder="v1"
               />
-            </div>
+            </Field>
+          </div>
+
+          {/* Action bar — generate + options + cost */}
+          <div className="flex items-center gap-x-4 gap-y-3 flex-wrap rounded-xl border border-border bg-muted/30 px-4 py-3">
             <Button onClick={onGenerate} disabled={generating}>
               {generating ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1072,6 +1120,7 @@ export function DatasetsPage() {
               )}
               {isDirect && reviewMode ? "Generate for review" : "Generate"}
             </Button>
+            <div className="hidden sm:block h-6 w-px bg-border" />
             {isDirect && (
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                 <input
@@ -1108,7 +1157,7 @@ export function DatasetsPage() {
             </label>
             {cost && (
               <span
-                className="text-xs text-muted-foreground ml-auto"
+                className="text-xs text-muted-foreground ml-auto text-right"
                 title={cost.note}
               >
                 {cost.priced
@@ -1139,6 +1188,14 @@ export function DatasetsPage() {
               generation with {effInfo.label} will fail until it is.
             </p>
           )}
+          <div className="flex items-center gap-3 pt-1">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Fine-tune — optional
+            </span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           {taxonomy &&
             (() => {
               const primary = taxonomy.categories ?? taxonomy.tasks ?? [];
