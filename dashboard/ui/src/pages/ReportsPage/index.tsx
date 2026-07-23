@@ -21,6 +21,8 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import {
   FileText,
   ArrowLeft,
+  ArrowRight,
+  Clock,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -57,6 +59,117 @@ function scoreBadgeClasses(score: number) {
   if (score >= 70) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-800";
   if (score >= 40) return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 ring-orange-200 dark:ring-orange-800";
   return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 ring-red-200 dark:ring-red-800";
+}
+
+function scoreHue(score: number): string {
+  return score >= 70 ? "#12a594" : score >= 40 ? "#f59e0b" : "#e05365";
+}
+
+/** A compact themed score dial — matches the Evaluations run cards. */
+function ScoreDial({ score, size = 64 }: { score: number; size?: number }) {
+  const sw = size * 0.1;
+  const r = (size - sw) / 2;
+  const c = 2 * Math.PI * r;
+  const s = Math.max(0, Math.min(100, score));
+  const off = c - (s / 100) * c;
+  const hue = scoreHue(s);
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        className="text-border"
+        strokeWidth={sw}
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke={hue}
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={off}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      <text
+        x="50%"
+        y="50%"
+        dominantBaseline="central"
+        textAnchor="middle"
+        fill={hue}
+        fontSize={size * 0.3}
+        className="font-bold tabular-nums"
+      >
+        {s}
+      </text>
+    </svg>
+  );
+}
+
+/** One report as a rich card, matching the Evaluations run-card layout. */
+function ReportCard({
+  r,
+  onOpen,
+}: {
+  r: ReportMeta;
+  onOpen: () => void;
+}) {
+  // In red-team reports, a "passed" attack means the target was compromised
+  // (vulnerable); "failed" means the attack was defended.
+  const vulnerable = r.passed;
+  const defended = r.failed;
+  const total = r.totalAttacks || vulnerable + defended + r.errors || 1;
+  const pct = (n: number) => `${Math.min(100, (n / total) * 100)}%`;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group text-left rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/40 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
+      <div className="flex items-start gap-4">
+        <ScoreDial score={r.score} />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-foreground truncate" title={r.targetUrl || r.filename}>
+            {r.targetUrl || truncate(r.filename, 50)}
+          </h3>
+          <p className="text-[11px] font-mono text-muted-foreground truncate mt-0.5" title={r.filename}>
+            {r.filename}
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+            <Clock className="w-3 h-3 shrink-0" />
+            {fmtDate(r.timestamp)}
+          </p>
+        </div>
+        <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0" />
+      </div>
+
+      {/* defense bar: defended (green) · vulnerable (red) · errors (amber) */}
+      <div className="mt-3.5">
+        <div className="h-1.5 rounded-full bg-muted overflow-hidden flex">
+          <div className="h-full bg-emerald-500" style={{ width: pct(defended) }} />
+          <div className="h-full bg-destructive" style={{ width: pct(vulnerable) }} />
+          <div className="h-full bg-amber-500" style={{ width: pct(r.errors) }} />
+        </div>
+        <div className="mt-2 flex items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground flex-wrap">
+          <span>
+            <span className="font-semibold text-foreground tabular-nums">{r.totalAttacks}</span> attacks
+          </span>
+          <span className="text-emerald-600 dark:text-emerald-400">{defended} defended</span>
+          {vulnerable > 0 && (
+            <span className="text-destructive">{vulnerable} vulnerable</span>
+          )}
+          {r.errors > 0 && (
+            <span className="text-amber-600 dark:text-amber-400">{r.errors} errors</span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
 }
 
 function severityVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
@@ -222,75 +335,15 @@ function ReportsGrid() {
         />
       ) : (
         <>
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[70px]">Score</TableHead>
-                    <TableHead>Target URL</TableHead>
-                    <TableHead className="w-[180px]">Date</TableHead>
-                    <TableHead className="w-[90px] text-center">Attacks</TableHead>
-                    <TableHead className="w-[90px] text-center">Vulnerable</TableHead>
-                    <TableHead className="w-[90px] text-center">Defended</TableHead>
-                    <TableHead className="w-[80px] text-center">Errors</TableHead>
-                    <TableHead className="w-[60px]" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {reports.map((r) => (
-                    <TableRow
-                      key={r.filename}
-                      className="cursor-pointer"
-                      onClick={() => navigate(`/reports/${encodeURIComponent(r.filename)}`)}
-                    >
-                      <TableCell>
-                        <span className={`inline-flex items-center justify-center w-10 h-10 rounded-full text-sm font-bold tabular-nums ring-1 ${scoreBadgeClasses(r.score)}`}>
-                          {r.score}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate max-w-[400px]">
-                            {r.targetUrl || truncate(r.filename, 50)}
-                          </p>
-                          {r.targetUrl && (
-                            <p className="text-xs text-muted-foreground truncate max-w-[400px] mt-0.5">
-                              {truncate(r.filename, 60)}
-                            </p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {fmtDate(r.timestamp)}
-                      </TableCell>
-                      <TableCell className="text-center text-sm tabular-nums">
-                        {r.totalAttacks}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="text-sm tabular-nums text-red-600 dark:text-red-400 font-medium">
-                          {r.passed}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="text-sm tabular-nums text-green-600 dark:text-green-400 font-medium">
-                          {r.failed}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="text-sm tabular-nums text-orange-600 dark:text-orange-400 font-medium">
-                          {r.errors}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <ExternalLink size={14} className="text-muted-foreground" />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <div className="grid gap-3 md:grid-cols-2">
+            {reports.map((r) => (
+              <ReportCard
+                key={r.filename}
+                r={r}
+                onOpen={() => navigate(`/reports/${encodeURIComponent(r.filename)}`)}
+              />
+            ))}
+          </div>
 
           {/* Pagination */}
           {totalPages > 1 && (
