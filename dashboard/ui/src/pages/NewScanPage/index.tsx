@@ -217,6 +217,7 @@ export default function NewScanPage() {
   const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
 
   // ── Target ──
+  const [scanName, setScanName] = useState("");
   const [targetType, setTargetType] = useState<"http_agent" | "mcp" | "websocket_agent">("http_agent");
   const [baseUrl, setBaseUrl] = useState("");
   const [agentEndpoint, setAgentEndpoint] = useState("/api/agent");
@@ -369,6 +370,9 @@ export default function NewScanPage() {
     const atk = c.attackConfig as Record<string, unknown> | undefined;
     const reqSchema = c.requestSchema as Record<string, unknown> | undefined;
     const resSchema = c.responseSchema as Record<string, unknown> | undefined;
+
+    // Scan name
+    if (typeof c.name === "string") setScanName(c.name);
 
     // Target
     if (target?.baseUrl) setBaseUrl(String(target.baseUrl));
@@ -564,6 +568,7 @@ export default function NewScanPage() {
     }
 
     const config: Record<string, unknown> = {
+      ...(scanName.trim() ? { name: scanName.trim() } : {}),
       target,
       auth: {
         methods: authMethods,
@@ -948,6 +953,18 @@ export default function NewScanPage() {
           <SectionHeader step={2} title="Configure target" icon={Target} />
           <Card>
             <CardContent className="pt-5 space-y-4">
+              {/* Scan name (optional) */}
+              <FieldRow label="Scan name" hint="Optional — a friendly label for this scan (shown in Scan Activity)">
+                <input
+                  type="text"
+                  value={scanName}
+                  onChange={(e) => setScanName(e.target.value)}
+                  placeholder="e.g. HR agent — nightly regression"
+                  maxLength={120}
+                  className={inputCls}
+                />
+              </FieldRow>
+
               {/* Target Type */}
               <FieldRow label="Target Type">
                 <div className="flex gap-2">

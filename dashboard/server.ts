@@ -1398,6 +1398,65 @@ const server = createServer(
       return;
     }
 
+    // PATCH /api/run/:id — rename a run (update the user-given name). The name
+    // lives in the run's config JSON, so no schema change is needed: we update
+    // the in-memory job, the saved config file, and the DB config JSONB.
+    if (url.pathname.startsWith("/api/run/") && req.method === "PATCH") {
+      const id = url.pathname.slice("/api/run/".length);
+      let name = "";
+      try {
+        const body = JSON.parse(await readBody(req));
+        name = typeof body?.name === "string" ? body.name.trim().slice(0, 120) : "";
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid body" }));
+        return;
+      }
+
+      const job = jobs.get(id);
+      let found = !!job;
+
+      // In-memory job: mutate its config and persist the saved-config file.
+      if (job) {
+        job.config.name = name || undefined;
+        saveRunConfig(id, job.config);
+      } else {
+        // Historical run: update the saved config file if present.
+        const cfg = await loadRunConfig(id, ctx?.tenantId);
+        if (cfg) {
+          cfg.name = name || undefined;
+          saveRunConfig(id, cfg);
+        }
+      }
+
+      // DB: set config.name (jsonb_set), or clear it when the name is empty.
+      if (isDbConfigured() && ctx?.tenantId) {
+        try {
+          const upd = await query(
+            name
+              ? `UPDATE runs SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{name}', to_jsonb($1::text), true)
+                   WHERE id=$2 AND tenant_id=$3 RETURNING id`
+              : `UPDATE runs SET config = (COALESCE(config, '{}'::jsonb) - 'name')
+                   WHERE id=$2 AND tenant_id=$3 RETURNING id`,
+            name ? [name, id, ctx.tenantId] : [null, id, ctx.tenantId],
+          );
+          if (upd.rows.length > 0) found = true;
+        } catch (err) {
+          console.error(`  [RENAME] DB update failed for ${id}:`, err);
+        }
+      }
+
+      if (!found) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Run not found" }));
+        return;
+      }
+      if (ctx) await logAudit(ctx, "run.rename", "run", id, { name });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runId: id, name: name || null }));
+      return;
+    }
+
     // DELETE /api/run/:id — cancel a running job (or ?purge=1 to remove it)
     if (url.pathname.startsWith("/api/run/") && req.method === "DELETE") {
       const id = url.pathname.slice("/api/run/".length);
@@ -1498,6 +1557,7 @@ const server = createServer(
             status: getJobStatus(j),
             startedAt: j.startedAt,
             finishedAt: j.finishedAt,
+            name: j.config?.name,
             targetUrl: describeTarget(j.config),
             error: j._cancelled ? "Cancelled by user" : j.error,
             // progress is a mixed stream of phase/message events (clone, plan,
@@ -1514,7 +1574,8 @@ const server = createServer(
       if (isDbConfigured() && ctx?.tenantId) {
         try {
           const dbRuns = await query(
-            `SELECT id, status, target_url, started_at, finished_at, error
+            `SELECT id, status, target_url, started_at, finished_at, error,
+                    config->>'name' AS name
              FROM runs WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT 100`,
             [ctx.tenantId],
           );
@@ -1537,6 +1598,7 @@ const server = createServer(
                 status: orphanedActive ? "error" : rawStatus,
                 startedAt,
                 finishedAt,
+                name: row.name || undefined,
                 targetUrl: row.target_url || "unknown",
                 error: orphanedActive
                   ? row.error || "Interrupted — server restarted before completion"

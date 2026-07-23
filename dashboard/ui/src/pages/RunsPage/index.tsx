@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { getRuns, getRun, deleteRun, createRun } from "@/api/runs";
+import { getRuns, getRun, deleteRun, createRun, renameRun } from "@/api/runs";
 import type { RunMeta, RunDetail } from "@/api/types";
 import { usePolling } from "@/hooks/usePolling";
 import {
@@ -20,6 +20,9 @@ import {
   ChevronRight,
   Loader2,
   Search,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { useDebounce } from "@/hooks/useDebounce";
 
@@ -193,6 +196,42 @@ export default function RunsPage() {
   );
 
   // Delete run
+  // Inline rename of a scan.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+
+  const startRename = useCallback((run: RunMeta, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingId(run.runId);
+    setNameDraft(run.name ?? "");
+  }, []);
+
+  const cancelRename = useCallback(() => {
+    setRenamingId(null);
+    setNameDraft("");
+  }, []);
+
+  const saveRename = useCallback(
+    async (runId: string) => {
+      const name = nameDraft.trim();
+      setSavingName(true);
+      try {
+        await renameRun(runId, name);
+        setRuns((prev) =>
+          prev.map((r) => (r.runId === runId ? { ...r, name: name || undefined } : r)),
+        );
+        setRenamingId(null);
+        setNameDraft("");
+      } catch (err) {
+        console.error("Failed to rename run:", err);
+      } finally {
+        setSavingName(false);
+      }
+    },
+    [nameDraft],
+  );
+
   const handleDelete = useCallback(
     async (runId: string, e: React.MouseEvent) => {
       e.stopPropagation();
@@ -350,12 +389,59 @@ export default function RunsPage() {
 
                   {/* Title + meta */}
                   <div className="min-w-0 flex-1">
-                    <h3
-                      className="text-sm font-semibold text-foreground truncate"
-                      title={run.targetUrl ?? ""}
-                    >
-                      {title}
-                    </h3>
+                    {renamingId === run.runId ? (
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          autoFocus
+                          value={nameDraft}
+                          onChange={(e) => setNameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveRename(run.runId);
+                            if (e.key === "Escape") cancelRename();
+                          }}
+                          placeholder="Name this scan…"
+                          className="h-7 min-w-0 flex-1 max-w-xs rounded border border-border bg-background px-2 text-sm"
+                        />
+                        <button
+                          onClick={() => saveRename(run.runId)}
+                          disabled={savingName}
+                          title="Save name"
+                          className="p-1 rounded text-emerald-600 dark:text-emerald-400 hover:bg-muted disabled:opacity-50"
+                        >
+                          {savingName ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <button
+                          onClick={cancelRename}
+                          title="Cancel"
+                          className="p-1 rounded text-muted-foreground hover:bg-muted"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="group/name flex items-center gap-1.5 min-w-0">
+                        <h3
+                          className="text-sm font-semibold text-foreground truncate"
+                          title={run.targetUrl ?? ""}
+                        >
+                          {title}
+                        </h3>
+                        <button
+                          onClick={(e) => startRename(run, e)}
+                          title={run.name ? "Rename scan" : "Name this scan"}
+                          className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted opacity-0 group-hover/name:opacity-100 transition-opacity"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                     <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
                       <span className={`font-semibold uppercase tracking-wide ${cfg.textColor}`}>
                         {cfg.label}
