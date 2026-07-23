@@ -141,6 +141,8 @@ export interface RunMeta {
   status: "queued" | "running" | "done" | "error" | "cancelled";
   startedAt: string;
   finishedAt?: string;
+  /** Optional user-given name for the scan (stored in the run config). */
+  name?: string;
   targetUrl?: string;
   error?: string;
   progressCount?: number;

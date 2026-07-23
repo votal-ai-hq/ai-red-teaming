@@ -33,39 +33,47 @@ const STATUS_CONFIG: Record<
     label: string;
     dot: string;
     textColor: string;
+    bg: string;
     icon: React.ElementType;
     pulse?: boolean;
+    spin?: boolean;
   }
 > = {
   running: {
     label: "Running",
     dot: "bg-blue-500",
     textColor: "text-blue-600 dark:text-blue-400",
+    bg: "bg-blue-500/10",
     icon: Loader2,
     pulse: true,
+    spin: true,
   },
   queued: {
     label: "Queued",
     dot: "bg-amber-500",
     textColor: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-500/10",
     icon: Clock,
   },
   done: {
     label: "Done",
     dot: "bg-emerald-500",
     textColor: "text-emerald-600 dark:text-emerald-400",
+    bg: "bg-emerald-500/10",
     icon: CheckCircle,
   },
   error: {
     label: "Error",
     dot: "bg-red-500",
     textColor: "text-red-600 dark:text-red-400",
+    bg: "bg-red-500/10",
     icon: XCircle,
   },
   cancelled: {
     label: "Cancelled",
     dot: "bg-red-400",
     textColor: "text-red-500 dark:text-red-400",
+    bg: "bg-red-400/10",
     icon: AlertCircle,
   },
 };
@@ -313,7 +321,7 @@ export default function RunsPage() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {runs.filter((r) => !debouncedSearch || (r.targetUrl ?? "").toLowerCase().includes(debouncedSearch.toLowerCase())).map((run) => {
+          {runs.filter((r) => !debouncedSearch || `${r.name ?? ""} ${r.targetUrl ?? ""}`.toLowerCase().includes(debouncedSearch.toLowerCase())).map((run) => {
             const cfg = STATUS_CONFIG[run.status] ?? STATUS_CONFIG.queued;
             const Icon = cfg.icon;
             const isExpanded = expandedId === run.runId;
@@ -322,43 +330,57 @@ export default function RunsPage() {
             const isDeleting = deletingIds.has(run.runId);
             const isRerunning = rerunningIds.has(run.runId);
 
+            const title = run.name || run.targetUrl || "—";
             return (
               <div
                 key={run.runId}
-                className="rounded-lg border border-border bg-card overflow-hidden hover:border-border/80 transition-colors"
+                className="rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/40 hover:shadow-sm"
               >
                 {/* Run row — click anywhere to expand */}
                 <div
-                  className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                  className="flex items-center gap-4 px-4 py-3.5 cursor-pointer"
                   onClick={() => toggleExpand(run.runId)}
                 >
-                  {/* Status dot */}
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot} ${cfg.pulse ? "animate-pulse" : ""}`} />
+                  {/* Tinted status icon */}
+                  <div className={`w-10 h-10 rounded-full grid place-items-center shrink-0 ${cfg.bg}`}>
+                    <Icon
+                      className={`w-5 h-5 ${cfg.textColor} ${cfg.spin ? "animate-spin" : ""}`}
+                    />
+                  </div>
 
-                  {/* Status text */}
-                  <span className={`text-xs font-semibold uppercase tracking-wide shrink-0 w-20 ${cfg.textColor}`}>
-                    {cfg.label}
-                  </span>
-
-                  {/* Date */}
-                  <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                    {fmtDateTime(run.startedAt)}
-                  </span>
-
-                  {/* Target URL */}
-                  <span
-                    className="text-sm text-foreground truncate flex-1 min-w-0"
-                    title={run.targetUrl ?? ""}
-                  >
-                    {run.targetUrl ?? "—"}
-                  </span>
-
-                  {/* Attacks count */}
-                  {run.progressCount != null && run.progressCount > 0 && (
-                    <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
-                      {run.progressCount} attacks
-                    </span>
-                  )}
+                  {/* Title + meta */}
+                  <div className="min-w-0 flex-1">
+                    <h3
+                      className="text-sm font-semibold text-foreground truncate"
+                      title={run.targetUrl ?? ""}
+                    >
+                      {title}
+                    </h3>
+                    <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
+                      <span className={`font-semibold uppercase tracking-wide ${cfg.textColor}`}>
+                        {cfg.label}
+                      </span>
+                      <span aria-hidden>·</span>
+                      <span className="flex items-center gap-1 whitespace-nowrap">
+                        <Clock className="w-3 h-3 shrink-0" />
+                        {fmtDateTime(run.startedAt)}
+                      </span>
+                      {run.name && run.targetUrl && (
+                        <>
+                          <span aria-hidden>·</span>
+                          <span className="truncate max-w-[16rem]" title={run.targetUrl}>
+                            {run.targetUrl}
+                          </span>
+                        </>
+                      )}
+                      {run.progressCount != null && run.progressCount > 0 && (
+                        <>
+                          <span aria-hidden>·</span>
+                          <span className="tabular-nums">{run.progressCount} attacks</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
 
                   {/* Action buttons — subtle, icon-only on small screens */}
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
