@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import {
   listDatasets,
   listQualityReports,
@@ -24,9 +24,9 @@ import {
   Bot,
   ListChecks,
   ArrowRight,
+  ArrowLeft,
   Database,
   Loader2,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
   TrendingUp,
@@ -34,6 +34,7 @@ import {
   Copy,
   Check,
   Clock,
+  AlertTriangle,
 } from "lucide-react";
 
 type Status = "live" | "cli" | "planned";
@@ -786,88 +787,146 @@ function ReportTrace({ report }: { report: QualityEvalReport }) {
   );
 }
 
-function QualityRunRow({
+/** Threshold values are stored as a 0..1 fraction, but be defensive. */
+function pctOfThreshold(t: number): number {
+  return Math.round((t <= 1 ? t * 100 : t));
+}
+function scoreHue(score: number): string {
+  return score >= 70 ? "#12a594" : score >= 40 ? "#f59e0b" : "#e05365";
+}
+
+/** A compact themed score dial for the run cards / focused header. */
+function ScoreDial({ score, size = 64 }: { score: number; size?: number }) {
+  const sw = size * 0.1;
+  const r = (size - sw) / 2;
+  const c = 2 * Math.PI * r;
+  const s = Math.max(0, Math.min(100, score));
+  const off = c - (s / 100) * c;
+  const hue = scoreHue(s);
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="shrink-0"
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        className="text-border"
+        strokeWidth={sw}
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke={hue}
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={off}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      <text
+        x="50%"
+        y="50%"
+        dominantBaseline="central"
+        textAnchor="middle"
+        fill={hue}
+        fontSize={size * 0.3}
+        className="font-bold tabular-nums"
+      >
+        {s}
+      </text>
+    </svg>
+  );
+}
+
+/** A run in the list — a rich card that opens its own focused trace page. */
+function QualityRunCard({
   meta,
   delta,
 }: {
   meta: QualityReportMeta;
   delta: number | null;
 }) {
-  const [open, setOpen] = useState(false);
-  const [report, setReport] = useState<QualityEvalReport | null>(null);
-  const [loading, setLoading] = useState(false);
-  const toggle = async () => {
-    const next = !open;
-    setOpen(next);
-    if (next && !report) {
-      setLoading(true);
-      try {
-        const r = await getQualityReport(meta.filename);
-        setReport(r.report);
-      } catch {
-        /* ignore */
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
+  const navigate = useNavigate();
+  const failing = Math.max(0, meta.total - meta.passed - meta.errors);
+  const passPct = meta.total ? Math.round((meta.passed / meta.total) * 100) : 0;
+  const hue = scoreHue(meta.score);
   return (
-    <div className="rounded-lg border border-border">
-      <button
-        type="button"
-        onClick={toggle}
-        className="w-full flex items-center gap-3 p-3 text-left"
-      >
-        {open ? (
-          <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="w-4 h-4 shrink-0 text-muted-foreground" />
-        )}
+    <button
+      type="button"
+      onClick={() => navigate(`/evaluations/${encodeURIComponent(meta.filename)}`)}
+      className="group text-left rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/40 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
+      <div className="flex items-start gap-4">
+        <ScoreDial score={meta.score} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium">{shortName(meta.dataset)}</span>
-            <Badge variant="outline" className="text-[10px]">
-              {meta.targetUrl || "unknown target"}
-            </Badge>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-foreground truncate">
+              {shortName(meta.dataset)}
+            </h3>
+            {delta !== null && delta !== 0 && (
+              <span
+                className={`inline-flex items-center gap-0.5 text-[11px] font-medium shrink-0 ${delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}
+                title="vs. the previous run of the same dataset"
+              >
+                {delta > 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                {delta > 0 ? "+" : ""}
+                {delta}
+              </span>
+            )}
           </div>
-          <span className="text-[11px] text-muted-foreground">
+          <p
+            className="text-[11px] text-muted-foreground truncate mt-0.5"
+            title={meta.targetUrl}
+          >
+            {meta.targetUrl || "unknown target"}
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+            <Clock className="w-3 h-3 shrink-0" />
             {new Date(meta.timestamp).toLocaleString()}
-          </span>
+          </p>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {delta !== null && delta !== 0 && (
-            <span
-              className={`flex items-center gap-0.5 text-[11px] ${delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}
-            >
-              {delta > 0 ? (
-                <TrendingUp className="w-3 h-3" />
-              ) : (
-                <TrendingDown className="w-3 h-3" />
-              )}
-              {delta > 0 ? "+" : ""}
-              {delta}
+        <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0" />
+      </div>
+
+      {/* pass-rate bar + counts */}
+      <div className="mt-3.5">
+        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full"
+            style={{ width: `${passPct}%`, background: hue }}
+          />
+        </div>
+        <div className="mt-2 flex items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground flex-wrap">
+          <span>
+            <span className="font-semibold text-foreground tabular-nums">
+              {meta.passed}
+            </span>
+            /{meta.total} passed
+          </span>
+          {failing > 0 && (
+            <span className="text-destructive">{failing} failing</span>
+          )}
+          {meta.errors > 0 && (
+            <span className="text-amber-600 dark:text-amber-400">
+              {meta.errors} errors
             </span>
           )}
-          <span className="text-sm font-semibold tabular-nums">{meta.score}%</span>
-          <span className="text-[11px] text-muted-foreground tabular-nums">
-            {meta.passed}/{meta.total}
-            {meta.errors > 0 && (
-              <span className="text-destructive"> · {meta.errors} err</span>
-            )}
-          </span>
+          <span className="ml-auto">pass ≥ {pctOfThreshold(meta.threshold)}%</span>
         </div>
-      </button>
-      {open && (
-        <div className="border-t border-border p-3 space-y-2">
-          {loading && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
-            </div>
-          )}
-          {report && <ReportTrace report={report} />}
-        </div>
-      )}
-    </div>
+      </div>
+    </button>
   );
 }
 
@@ -892,12 +951,116 @@ function QualityRunsSection() {
           ▲/▼ vs the previous run of the same dataset
         </span>
       </div>
-      <div className="space-y-2">
+      <div className="grid gap-3 md:grid-cols-2">
         {reports.map((r, i) => (
-          <QualityRunRow key={r.id} meta={r} delta={scoreDelta(reports, i)} />
+          <QualityRunCard key={r.id} meta={r} delta={scoreDelta(reports, i)} />
         ))}
       </div>
     </section>
+  );
+}
+
+/** The focused, full-page trace for one run — reached from a run card. */
+export function EvaluationRunPage() {
+  const { filename } = useParams();
+  const navigate = useNavigate();
+  const [report, setReport] = useState<QualityEvalReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!filename) return;
+    setLoading(true);
+    setError(null);
+    getQualityReport(filename)
+      .then((r) => setReport(r.report))
+      .catch(() => setError("This report could not be loaded."))
+      .finally(() => setLoading(false));
+  }, [filename]);
+
+  const s = report?.summary;
+
+  return (
+    <div className="p-6 space-y-5">
+      <button
+        type="button"
+        onClick={() => navigate("/evaluations")}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        Back to Evaluations
+      </button>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading report…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex items-center gap-2 text-sm text-destructive py-12 justify-center">
+          <AlertTriangle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
+      {report && s && (
+        <>
+          {/* focused run header */}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-start gap-5 flex-wrap">
+              <ScoreDial score={s.score} size={84} />
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-semibold text-foreground break-words">
+                  {shortName(report.dataset ?? filename ?? "report")}
+                </h1>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="outline" className="text-[10.5px]">
+                    {report.targetUrl || "unknown target"}
+                  </Badge>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    {new Date(report.timestamp).toLocaleString()}
+                  </span>
+                  <span>pass threshold ≥ {pctOfThreshold(report.passThreshold)}%</span>
+                </div>
+                {/* headline counts */}
+                <div className="mt-3 flex flex-wrap gap-4 text-sm">
+                  <span>
+                    <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {s.passed}
+                    </span>{" "}
+                    <span className="text-muted-foreground">passed</span>
+                  </span>
+                  <span>
+                    <span className="font-semibold tabular-nums text-destructive">
+                      {Math.max(0, s.total - s.passed - s.errors)}
+                    </span>{" "}
+                    <span className="text-muted-foreground">failing</span>
+                  </span>
+                  {s.errors > 0 && (
+                    <span>
+                      <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                        {s.errors}
+                      </span>{" "}
+                      <span className="text-muted-foreground">errors</span>
+                    </span>
+                  )}
+                  <span>
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {s.total}
+                    </span>{" "}
+                    <span className="text-muted-foreground">total</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* the records browser, full width */}
+          <ReportTrace report={report} />
+        </>
+      )}
+    </div>
   );
 }
 
