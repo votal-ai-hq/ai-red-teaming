@@ -294,11 +294,23 @@ export interface GuardrailResult {
 }
 
 // ── Reference ──
+/** One compliance control an attack category maps to (from /api/reference). */
+export interface CategoryComplianceRef {
+  framework: string;
+  code: string;
+  title: string;
+}
+export interface ReferenceFramework {
+  id: string;
+  name: string;
+  controlCount: number;
+}
 export interface ReferenceData {
   categories: string[];
   strategies: StrategyInfo[];
-  categoryCompliance: Record<string, string[]>;
-  frameworks?: { name: string; items: unknown[] }[];
+  /** category → the compliance controls it covers (reverse mapping). */
+  categoryCompliance: Record<string, CategoryComplianceRef[]>;
+  frameworks?: ReferenceFramework[];
   /** Whether this instance permits MCP stdio targets (self-hosted only). */
   allowMcpStdio?: boolean;
   /** Categories that have native MCP attacks (used to scope the form for MCP targets). */

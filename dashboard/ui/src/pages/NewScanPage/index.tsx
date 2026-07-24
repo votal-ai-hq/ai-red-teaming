@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router";
 import { createRun, getRuns } from "@/api/runs";
 import type { RunMeta } from "@/api/types";
 import { getReference, discoverMcp } from "@/api/reference";
+import { CompliancePresets } from "@/components/shared/CompliancePresets";
 import { apiFetch } from "@/api/client";
 import {
   listDatasets,
@@ -131,6 +132,7 @@ const TEMPLATES = [
 function prettyCat(cat: string) {
   return cat.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
 
 function SectionHeader({
   step,
@@ -1328,6 +1330,21 @@ export default function NewScanPage() {
             <SectionHeader step={3} title="Select attack categories" icon={Crosshair} />
             <Card>
               <CardContent className="pt-5">
+                {/* Compliance-framework presets — select the union of categories a
+                    framework's controls map to, and preview forward coverage. */}
+                {ref.frameworks && ref.frameworks.length > 0 && (
+                  <CompliancePresets
+                    className="mb-5"
+                    frameworks={ref.frameworks}
+                    categoryCompliance={ref.categoryCompliance}
+                    selectableCategories={selectableCategories}
+                    selected={selectedCategories}
+                    onAdd={(cats) =>
+                      setSelectedCategories((prev) => [...new Set([...prev, ...cats])])
+                    }
+                  />
+                )}
+
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-xs text-muted-foreground">
                     {selectedCategories.length}/{selectableCategories.length} selected

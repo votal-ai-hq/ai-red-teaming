@@ -23,6 +23,9 @@ import {
   type CostEstimate,
 } from "@/api/datasets";
 import { ProfileWizard } from "./ProfileWizard";
+import { getReference } from "@/api/reference";
+import { CompliancePresets } from "@/components/shared/CompliancePresets";
+import type { CategoryComplianceRef, ReferenceFramework } from "@/api/types";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -596,6 +599,11 @@ export function DatasetsPage() {
   const [trends, setTrends] = useState<EvalTrend[]>([]);
   const [loading, setLoading] = useState(true);
   const [kind, setKind] = useState<"security" | "quality">("security");
+  // Compliance-framework mapping (for the security-focus presets), loaded once.
+  const [frameworks, setFrameworks] = useState<ReferenceFramework[]>([]);
+  const [categoryCompliance, setCategoryCompliance] = useState<
+    Record<string, CategoryComplianceRef[]>
+  >({});
   const [family, setFamily] = useState<"mcp" | "agent">("mcp");
   const [providers, setProviders] = useState<GenerationProvider[]>(
     FALLBACK_PROVIDERS,
@@ -682,6 +690,13 @@ export function DatasetsPage() {
             (m) => r.engines.find((e) => e.id === "openai")?.defaultModel ?? m,
           );
         }
+      })
+      .catch(() => {});
+    // Compliance mapping powers the security-focus framework presets.
+    getReference()
+      .then((r) => {
+        setFrameworks(r.frameworks ?? []);
+        setCategoryCompliance(r.categoryCompliance ?? {});
       })
       .catch(() => {});
   }, []);
@@ -1207,6 +1222,20 @@ export function DatasetsPage() {
                   <Label className="text-xs">
                     Focus (optional) — leave empty to cover the full set
                   </Label>
+                  {/* Compliance-framework presets — generate rows for the categories
+                      a framework's controls map to. Security datasets only (quality
+                      datasets focus on tasks, which don't map to frameworks). */}
+                  {kind === "security" && frameworks.length > 0 && (
+                    <CompliancePresets
+                      frameworks={frameworks}
+                      categoryCompliance={categoryCompliance}
+                      selectableCategories={primary}
+                      selected={selCategories}
+                      onAdd={(cats) =>
+                        setSelCategories((prev) => [...new Set([...prev, ...cats])])
+                      }
+                    />
+                  )}
                   <div className="space-y-1">
                     <span className="text-[11px] text-muted-foreground">
                       {primaryLabel}
