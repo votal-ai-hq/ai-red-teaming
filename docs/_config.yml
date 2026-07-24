@@ -36,6 +36,10 @@ color_scheme: light
 # Heading anchor links
 heading_anchors: true
 
+# Mermaid diagrams (renders ```mermaid code blocks)
+mermaid:
+  version: "10.9.1"
+
 # Footer
 footer_content: 'Red-Team AI &middot; <a href="https://github.com/sundi133/wb-red-team">GitHub</a> &middot; MIT licensed'
 

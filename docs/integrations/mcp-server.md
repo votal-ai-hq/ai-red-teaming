@@ -18,6 +18,55 @@ to the MCP server **directly** — over `stdio` for local servers, or `sse` /
 
 Both are available from the **dashboard UI** and the **CLI**.
 
+## Topology
+
+Where wb-red-team sits relative to your MCP server. The engine never touches the
+target's internals — it connects as an ordinary MCP client over the wire, exactly
+like Claude Desktop or Cursor would.
+
+```mermaid
+flowchart LR
+  UI["Dashboard UI<br/>Launch Scan"] --> ENG
+  CLI["CLI<br/>tsx red-team.ts"] --> ENG
+  ENG["wb-red-team engine"] <-->|"generate attacks · judge"| LLM["LLM providers<br/>OpenAI · Anthropic · …"]
+  ENG -->|"MCP session<br/>stdio · streamable_http · sse"| SRV["MCP server<br/>tools · prompts · resources"]
+  SRV --> BE["Downstream<br/>DB · files · APIs · tenants"]
+  ENG --> REP["Reports<br/>report/ · Reports tab"]
+  ENG --> EVAL["Quality reports<br/>Evaluations tab"]
+```
+
+- **Connection** — the engine opens an MCP session over the chosen transport and
+  auto-discovers the server's tools/prompts/resources. `allowlistedTools` /
+  `denylistedTools` scope what it may call.
+- **LLM providers** — used to *generate* adversarial attacks (red-team), *drive*
+  the agent loop (quality), and *judge* responses. They never see your traffic
+  unless you configure them as the target.
+- **Outputs** — red-team runs land in `report/` and the **Reports** tab; quality
+  runs are persisted and shown under **Evaluations**.
+
+## Anatomy of a run
+
+Both modes share the connect + discover front end, then split:
+
+```mermaid
+flowchart TD
+  A["Connect to MCP endpoint"] --> B["Discover tools · prompts · resources"]
+  B --> C{"Mode?"}
+  C -->|"Red-team"| R1["Select MCP attack categories"]
+  R1 --> R2["Run tool-call attacks<br/>± adaptive rounds / agent loop"]
+  R2 --> R3["Analyze responses<br/>canary patterns + LLM judge"]
+  R3 --> R4["Score → Report<br/>Scan Activity · Reports"]
+  C -->|"Quality eval"| Q1["Load quality dataset rows"]
+  Q1 --> Q2["Agent loop over MCP tools<br/>LLM works each task"]
+  Q2 --> Q3["Score tool_call_accuracy<br/>+ judge metrics"]
+  Q3 --> Q4["Persist → Evaluations<br/>Recent quality evals"]
+```
+
+The red-team path is **adversarial** (does a crafted request make a tool
+misbehave?); the quality path is **cooperative** (given a realistic task, does the
+agent pick the right tools and reach the goal?). The step-by-step for each is
+below.
+
 ---
 
 ## From the dashboard (UI)
