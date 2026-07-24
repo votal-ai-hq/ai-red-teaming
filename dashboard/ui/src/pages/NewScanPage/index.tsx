@@ -136,18 +136,25 @@ function SectionHeader({
   step,
   title,
   icon: Icon,
+  hint,
 }: {
   step: number;
   title: string;
   icon: React.ElementType;
+  hint?: string;
 }) {
   return (
-    <div className="flex items-center gap-2.5 mb-4">
-      <div className="w-6 h-6 rounded-full bg-primary text-white text-xs font-bold flex items-center justify-center shrink-0">
+    <div className="flex items-start gap-3 mb-4">
+      <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold grid place-items-center shrink-0">
         {step}
       </div>
-      <Icon className="w-4 h-4 text-muted-foreground" />
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          {title}
+        </h2>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
     </div>
   );
 }
@@ -195,15 +202,54 @@ function FieldRow({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-xs font-medium text-foreground">{label}</label>
+      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </label>
       {children}
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
 
+/** A segmented control — grouped pill toggles in a single track. */
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  size = "md",
+}: {
+  options: { value: T; label: string; title?: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  size?: "sm" | "md";
+}) {
+  const pad = size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm";
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            title={o.title}
+            onClick={() => onChange(o.value)}
+            className={`rounded-md font-medium transition-colors ${pad} ${
+              active
+                ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const inputCls =
-  "w-full px-3 py-2 text-sm border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
+  "w-full h-10 px-3 text-sm border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
 const selectCls = `${inputCls} appearance-none cursor-pointer`;
 
 /* ─── main component ─── */
@@ -828,22 +874,14 @@ export default function NewScanPage() {
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Mode: red-team security scan vs. functional-quality eval. */}
         <section>
-          <div className="inline-flex rounded-lg border border-border p-1 gap-1">
-            <button
-              type="button"
-              onClick={() => setMode("security")}
-              className={`px-3 py-1.5 rounded-md text-sm ${mode === "security" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              Security scan
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("quality")}
-              className={`px-3 py-1.5 rounded-md text-sm ${mode === "quality" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              Quality eval
-            </button>
-          </div>
+          <Segmented
+            options={[
+              { value: "security", label: "Security scan" },
+              { value: "quality", label: "Quality eval" },
+            ]}
+            value={mode}
+            onChange={setMode}
+          />
           <p className="text-xs text-muted-foreground mt-2">
             {mode === "quality"
               ? "Score a quality dataset for correctness against a target. Attack/template/policy settings are ignored in this mode."
@@ -853,22 +891,19 @@ export default function NewScanPage() {
           {/* Quality eval: target source — a new target or a previous scan's. */}
           {mode === "quality" && (
             <div className="mt-3 rounded-lg border border-border p-3 space-y-2">
-              <span className="text-xs font-medium">Target</span>
-              <div className="inline-flex rounded-lg border border-border p-1 gap-1">
-                <button
-                  type="button"
-                  onClick={() => setTargetSource("new")}
-                  className={`px-3 py-1 rounded-md text-xs ${targetSource === "new" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Configure new target
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTargetSource("previous")}
-                  className={`px-3 py-1 rounded-md text-xs ${targetSource === "previous" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Reuse a previous scan
-                </button>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Target
+              </span>
+              <div>
+                <Segmented
+                  size="sm"
+                  options={[
+                    { value: "new", label: "Configure new target" },
+                    { value: "previous", label: "Reuse a previous scan" },
+                  ]}
+                  value={targetSource}
+                  onChange={setTargetSource}
+                />
               </div>
               {targetSource === "previous" ? (
                 previousRuns.length > 0 ? (
@@ -967,36 +1002,23 @@ export default function NewScanPage() {
 
               {/* Target Type */}
               <FieldRow label="Target Type">
-                <div className="flex gap-2">
-                  {(
-                    [
-                      { value: "http_agent", label: "HTTP Agent" },
-                      { value: "mcp", label: "MCP" },
-                      { value: "websocket_agent", label: "WebSocket" },
-                    ] as const
-                  ).map((t) => (
-                    <button
-                      key={t.value}
-                      type="button"
-                      onClick={() => {
-                        setTargetType(t.value);
-                        // Default to MCP-relevant categories when switching to MCP.
-                        if (t.value === "mcp" && ref?.mcpCategories?.length) {
-                          setSelectedCategories(
-                            ref.categories.filter((c) => ref.mcpCategories!.includes(c)),
-                          );
-                        }
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                        targetType === t.value
-                          ? "bg-primary text-white border-primary"
-                          : "bg-card text-muted-foreground border-border hover:border-muted-foreground/30"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  options={[
+                    { value: "http_agent", label: "HTTP Agent" },
+                    { value: "mcp", label: "MCP" },
+                    { value: "websocket_agent", label: "WebSocket" },
+                  ]}
+                  value={targetType}
+                  onChange={(v) => {
+                    setTargetType(v);
+                    // Default to MCP-relevant categories when switching to MCP.
+                    if (v === "mcp" && ref?.mcpCategories?.length) {
+                      setSelectedCategories(
+                        ref.categories.filter((c) => ref.mcpCategories!.includes(c)),
+                      );
+                    }
+                  }}
+                />
               </FieldRow>
 
               {/* ── HTTP Agent fields ── */}
@@ -1640,6 +1662,13 @@ export default function NewScanPage() {
 
         {/* ═══ Collapsible sections ═══ */}
         <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Advanced configuration
+            </span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
           {/* Auth */}
           <CollapsibleSection title="Authentication" icon={Key}>
             <div className="space-y-4">
@@ -2126,42 +2155,61 @@ export default function NewScanPage() {
           </section>
         )}
 
-        {/* ═══ Submit ═══ */}
-        <button
-          type="submit"
-          disabled={
-            mode === "quality"
-              ? evalRunning ||
-                !datasetFile.trim() ||
-                (targetSource === "new" ? !targetReady : !previousRunId)
-              : submitting || !targetReady
-          }
-          className="w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.99]"
-        >
-          {mode === "quality" ? (
-            evalRunning ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Scoring…
-              </>
-            ) : (
-              <>
-                <Play className="w-5 h-5" />
-                Run quality eval
-              </>
-            )
-          ) : submitting ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Starting Scan...
-            </>
-          ) : (
-            <>
-              <Play className="w-5 h-5" />
-              Start Scan
-            </>
-          )}
-        </button>
+        {/* ═══ Submit — sticky action bar ═══ */}
+        <div className="sticky bottom-4 z-10">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75 px-4 py-3 shadow-lg">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground truncate">
+              {mode === "quality"
+                ? !datasetFile.trim()
+                  ? "Select a quality dataset to run"
+                  : targetSource === "previous"
+                    ? previousRunId
+                      ? "Ready to score"
+                      : "Select a previous scan"
+                    : targetReady
+                      ? "Ready to score"
+                      : "Configure the target below"
+                : targetReady
+                  ? `Ready to scan${selectableCategories.length ? ` · ${allCatsSelected || selectedCategories.length === 0 ? "all" : selectedCategories.length} categories` : ""}`
+                  : "Configure a target to start"}
+            </p>
+            <button
+              type="submit"
+              disabled={
+                mode === "quality"
+                  ? evalRunning ||
+                    !datasetFile.trim() ||
+                    (targetSource === "new" ? !targetReady : !previousRunId)
+                  : submitting || !targetReady
+              }
+              className="flex items-center justify-center gap-2.5 px-6 py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.99] shrink-0"
+            >
+              {mode === "quality" ? (
+                evalRunning ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Scoring…
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    Run quality eval
+                  </>
+                )
+              ) : submitting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Starting Scan...
+                </>
+              ) : (
+                <>
+                  <Play className="w-5 h-5" />
+                  Start Scan
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );
