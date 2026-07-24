@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { generateReport } from "../lib/report-generator.js";
+import {
+  generateReport,
+  mapResultsToCompliance,
+} from "../lib/report-generator.js";
 import type { AttackResult, RoundResult, Attack } from "../lib/types.js";
+import type { ComplianceFramework } from "../lib/compliance-mappings.js";
 
 function makeAttack(overrides: Partial<Attack> = {}): Attack {
   return {
@@ -318,5 +322,89 @@ describe("generateReport", () => {
     // Normalized: totalWeight=56, vulnWeight=38, score=100*(1-38/56)=32
     expect(report.summary.score).toBeGreaterThanOrEqual(0);
     expect(report.summary.score).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("mapResultsToCompliance", () => {
+  const framework: ComplianceFramework = {
+    id: "test-fw",
+    name: "Test Framework",
+    items: [
+      {
+        code: "AC-3",
+        title: "Access Enforcement",
+        description: "Enforce approved authorizations.",
+        categories: ["auth_bypass", "rbac_bypass"],
+      },
+      {
+        code: "AU-6",
+        title: "Audit Logging",
+        description: "Review audit records.",
+        categories: ["prompt_injection"],
+      },
+    ],
+  };
+
+  it("reconciles duplicate findings to the highest observed severity (Gap 4)", () => {
+    const results: AttackResult[] = [
+      makeResult({
+        verdict: "PASS",
+        findings: ["Sensitive file exposed"],
+        attack: makeAttack({ category: "auth_bypass", severity: "medium" }),
+      }),
+      makeResult({
+        verdict: "PASS",
+        findings: ["sensitive file exposed."],
+        attack: makeAttack({ category: "rbac_bypass", severity: "critical" }),
+      }),
+    ];
+    const control = mapResultsToCompliance(results, [framework]).find(
+      (c) => c.code === "AC-3",
+    )!;
+    // The formatting-only duplicate collapses to a single finding...
+    expect(control.findings).toHaveLength(1);
+    // ...and the control severity reflects the worst succeeded attack.
+    expect(control.severity).toBe("critical");
+  });
+
+  it("attaches a deterministic confidence and no severity when untested", () => {
+    const control = mapResultsToCompliance([], [framework]).find(
+      (c) => c.code === "AU-6",
+    )!;
+    expect(control.status).toBe("not_tested");
+    expect(control.confidence).toBeUndefined();
+    expect(control.severity).toBeUndefined();
+    expect(control.rationale).toContain("unverified");
+  });
+
+  it("gives a vulnerable control a confidence and a direction-correct rationale (Gaps 1/8)", () => {
+    const results: AttackResult[] = [
+      makeResult({
+        verdict: "PASS",
+        findings: ["auth bypassed"],
+        attack: makeAttack({ category: "auth_bypass", severity: "high" }),
+      }),
+    ];
+    const control = mapResultsToCompliance(results, [framework]).find(
+      (c) => c.code === "AC-3",
+    )!;
+    expect(control.status).toBe("vulnerable");
+    expect(control.confidence).toBeGreaterThanOrEqual(40);
+    expect(control.confidence).toBeLessThanOrEqual(99);
+    expect(control.rationale).toContain("not enforced");
+    expect(control.rationale?.toLowerCase()).not.toContain("scan successfully");
+  });
+
+  it("maps identical inputs to identical output (Gap 3 — determinism)", () => {
+    const results: AttackResult[] = [
+      makeResult({
+        verdict: "PASS",
+        findings: ["auth bypassed"],
+        attack: makeAttack({ category: "auth_bypass", severity: "high" }),
+      }),
+    ];
+    expect(mapResultsToCompliance(results, [framework])).toEqual(
+      mapResultsToCompliance(results, [framework]),
+    );
   });
 });

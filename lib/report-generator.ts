@@ -12,6 +12,13 @@ import type {
 } from "./types.js";
 import type { ComplianceFramework } from "./compliance-mappings.js";
 import { loadComplianceFrameworks } from "./compliance-loader.js";
+import {
+  dedupeFindings,
+  deriveMappingConfidence,
+  controlOutcomeRationale,
+  highestSeverity,
+  type Severity,
+} from "./compliance-refine.js";
 
 const SEVERITY_WEIGHTS: Record<AttackCategory, number> = {
   auth_bypass: 15,
@@ -298,9 +305,38 @@ export function mapResultsToCompliance(
         status = "secure";
       }
 
-      const findings = mapped
+      // Gap 4 — dedup findings across attacks and reconcile each to the highest
+      // severity observed, so the same weakness reported at conflicting levels
+      // collapses to one row at its worst level. A PASS carries the attack's
+      // declared severity; a PARTIAL is exposure without a demonstrated
+      // compromise, so it does not inflate the row.
+      const rankedFindings = mapped
         .filter((r) => r.verdict === "PASS" || r.verdict === "PARTIAL")
-        .flatMap((r) => r.findings);
+        .flatMap((r) =>
+          r.findings.map((text) => ({
+            text,
+            severity:
+              r.verdict === "PASS"
+                ? (r.attack.severity as Severity)
+                : undefined,
+          })),
+        );
+      const dedupedFindings = dedupeFindings(rankedFindings);
+      const findings = dedupedFindings.map((f) => f.text);
+
+      const tally = {
+        passed: passCount,
+        partial: partialCount,
+        failed: failCount,
+        total: mapped.length,
+      };
+      const severity = highestSeverity(
+        mapped
+          .filter((r) => r.verdict === "PASS")
+          .map((r) => r.attack.severity as Severity),
+      );
+      const confidence = deriveMappingConfidence(status, tally);
+      const rationale = controlOutcomeRationale(status, tally, item.title);
 
       // Keep the full per-attack mapping so the compliance UI can show WHICH
       // attacks landed on this control and WHY (category ∈ control scope),
@@ -328,7 +364,10 @@ export function mapResultsToCompliance(
         partial: partialCount,
         failed: failCount,
         status,
-        findings: [...new Set(findings)],
+        severity,
+        confidence,
+        rationale,
+        findings,
         attacks,
       });
     }
