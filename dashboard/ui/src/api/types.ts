@@ -187,6 +187,8 @@ export interface ComplianceFramework {
 export interface ComplianceControlAttack {
   name: string;
   category: string;
+  /** Delivery strategy / tactic used (e.g. crescendo, roleplay). */
+  strategy?: string;
   severity: string;
   verdict: "PASS" | "PARTIAL" | "FAIL";
   detail?: string;
@@ -202,6 +204,9 @@ export interface ComplianceResult {
   details?: string;
   recommendations?: string[];
   attacksAnalyzed?: number;
+  /** Attack categories this control maps to (coverage basis) — present even for
+   *  not_tested controls so the UI can show what would exercise the control. */
+  categories?: string[];
   /** Per-attack breakdown for this control, returned by the static-mapping
    *  endpoint. Lets the UI associate controls back to individual vulnerabilities
    *  (each attack carries the category the control maps against). */

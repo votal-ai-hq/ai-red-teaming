@@ -3386,6 +3386,7 @@ const server = createServer(
           code: m.code,
           title: m.title,
           description: m.description,
+          categories: m.categories,
           status: m.status,
           attacksAnalyzed: m.totalAttacks,
           passed: m.passed,
