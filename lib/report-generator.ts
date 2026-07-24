@@ -310,6 +310,7 @@ export function mapResultsToCompliance(
         .map((r) => ({
           name: r.attack.name,
           category: r.attack.category,
+          strategy: r.attack.strategyName,
           severity: r.attack.severity,
           verdict: r.verdict as "PASS" | "PARTIAL" | "FAIL",
           detail: (r.llmReasoning || r.findings[0] || "").slice(0, 280),
@@ -321,6 +322,7 @@ export function mapResultsToCompliance(
         code: item.code,
         title: item.title,
         description: item.description,
+        categories: item.categories,
         totalAttacks: mapped.length,
         passed: passCount,
         partial: partialCount,

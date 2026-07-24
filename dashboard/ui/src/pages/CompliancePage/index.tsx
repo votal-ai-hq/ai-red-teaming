@@ -98,6 +98,29 @@ function truncateUrl(url: string, max = 32): string {
   }
 }
 
+/** snake_case attack category/tactic \u2192 "Title Case". */
+function pretty(s: string): string {
+  return s.replace(/[_-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const VERDICT_STYLE: Record<string, { dot: string; label: string; text: string }> = {
+  PASS: { dot: "bg-red-500", label: "Vulnerable", text: "text-red-600 dark:text-red-400" },
+  PARTIAL: { dot: "bg-orange-500", label: "At risk", text: "text-orange-600 dark:text-orange-400" },
+  FAIL: { dot: "bg-emerald-500", label: "Defended", text: "text-emerald-600 dark:text-emerald-400" },
+};
+
+/** A small neutral chip for categories / tactics. */
+function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
+  return (
+    <span
+      title={title}
+      className="inline-flex items-center rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+    >
+      {children}
+    </span>
+  );
+}
+
 /* ---------- component ---------- */
 
 export default function CompliancePage() {
@@ -345,23 +368,30 @@ export default function CompliancePage() {
                   </button>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                 {frameworks.map((fw) => {
                   const selected = selectedFrameworks.has(fw.id);
                   return (
                     <button
                       key={fw.id}
                       onClick={() => toggleFramework(fw.id)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      title={fw.name}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border text-left transition-all ${
                         selected
-                          ? "bg-primary text-white border-primary shadow-sm"
+                          ? "bg-primary/5 text-foreground border-primary/50 ring-1 ring-primary/20"
                           : "bg-card text-muted-foreground border-border hover:border-muted-foreground/30 hover:text-foreground"
                       }`}
                     >
-                      {selected && <CheckCircle className="w-3 h-3" />}
-                      {fw.name}
-                      <span className={selected ? "text-white/70" : "text-muted-foreground"}>
-                        ({fw.controlCount})
+                      <span
+                        className={`grid place-items-center w-4 h-4 rounded shrink-0 border ${
+                          selected ? "bg-primary border-primary text-white" : "border-border"
+                        }`}
+                      >
+                        {selected && <CheckCircle className="w-3 h-3" />}
+                      </span>
+                      <span className="truncate flex-1">{fw.name}</span>
+                      <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+                        {fw.controlCount}
                       </span>
                     </button>
                   );
@@ -483,10 +513,13 @@ export default function CompliancePage() {
                       const details = r.details?.trim();
                       const recommendations = r.recommendations ?? [];
                       const findings = r.findings ?? [];
+                      const attacks = r.attacks ?? [];
+                      const categories = r.categories ?? [];
                       const hasAnalysis =
                         !!details || recommendations.length > 0 || findings.length > 0;
+                      const hasDetail = hasAnalysis || attacks.length > 0;
                       return (
-                        <div key={`${r.code}-${i}`} className="py-3 first:pt-0 last:pb-0">
+                        <div key={`${r.code}-${i}`} className="py-3.5 first:pt-0 last:pb-0">
                           <div className="flex items-start gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
@@ -496,16 +529,67 @@ export default function CompliancePage() {
                                 <span className="text-sm font-medium text-foreground">{r.title}</span>
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5">{r.summary}</p>
+                              {/* category → control mapping (shown even when not tested) */}
+                              {categories.length > 0 && (
+                                <div className="mt-2 flex flex-wrap items-center gap-1">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70 mr-0.5">
+                                    Maps to
+                                  </span>
+                                  {categories.map((c) => (
+                                    <Chip key={c} title={c}>
+                                      {pretty(c)}
+                                    </Chip>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <StatusBadge status={r.status} />
                           </div>
-                          {hasAnalysis && (
+                          {hasDetail && (
                             <details className="mt-2 group">
                               <summary className="cursor-pointer text-xs font-medium text-primary hover:underline list-none inline-flex items-center gap-1">
                                 <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
-                                Detailed analysis
+                                {attacks.length > 0
+                                  ? `${attacks.length} attack${attacks.length === 1 ? "" : "s"} exercised this control`
+                                  : "Detailed analysis"}
                               </summary>
                               <div className="mt-2 space-y-3 pl-4 border-l-2 border-border">
+                                {attacks.length > 0 && (
+                                  <div className="space-y-1.5">
+                                    {attacks.map((a, j) => {
+                                      const v = VERDICT_STYLE[a.verdict] ?? VERDICT_STYLE.FAIL;
+                                      return (
+                                        <div
+                                          key={j}
+                                          className="flex items-start gap-2 text-xs"
+                                          title={a.detail}
+                                        >
+                                          <span
+                                            className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${v.dot}`}
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <span className="text-foreground/90 truncate">
+                                                {a.name}
+                                              </span>
+                                              <Chip title={`category: ${a.category}`}>
+                                                {pretty(a.category)}
+                                              </Chip>
+                                              {a.strategy && (
+                                                <Chip title={`tactic: ${a.strategy}`}>
+                                                  ⚔ {pretty(a.strategy)}
+                                                </Chip>
+                                              )}
+                                              <span className={`font-medium ${v.text}`}>
+                                                {v.label}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                                 {details && (
                                   <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
                                     {details}

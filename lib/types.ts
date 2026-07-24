@@ -926,6 +926,8 @@ export interface Report {
 export interface ComplianceMappedAttack {
   name: string;
   category: AttackCategory;
+  /** Delivery strategy / tactic used to craft the attack (e.g. crescendo, roleplay). */
+  strategy?: string;
   severity: "critical" | "high" | "medium" | "low";
   verdict: "PASS" | "PARTIAL" | "FAIL";
   /** Short finding / judge reasoning — why the attack succeeded or was blocked. */
@@ -944,6 +946,9 @@ export interface ComplianceResult {
   failed: number;
   status: "vulnerable" | "at_risk" | "secure" | "not_tested";
   findings: string[];
+  /** Attack categories this control maps to — the basis for coverage, shown
+   *  even when the control is not_tested so users see what WOULD exercise it. */
+  categories?: AttackCategory[];
   /** Every attack mapped to this control (reason = category ∈ control scope). */
   attacks: ComplianceMappedAttack[];
 }
