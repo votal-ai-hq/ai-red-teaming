@@ -1922,10 +1922,15 @@ export default function NewScanPage() {
             </div>
           </CollapsibleSection>
 
+          {/* Only shown when a dataset is actually in play: quality mode (a
+              dataset is required) or arriving from the Datasets tab's "Use for
+              evaluation" (?dataset=…). A plain "New Scan" hides it — the dataset
+              list would be noise (and unwieldy with many datasets). */}
+          {(mode === "quality" || !!deepLinkDataset) && (
           <CollapsibleSection
             title="Evaluation Dataset"
             icon={FileText}
-            defaultOpen={!!deepLinkDataset || mode === "quality"}
+            defaultOpen
           >
             <div className="space-y-4">
               <FieldRow
@@ -1999,6 +2004,7 @@ export default function NewScanPage() {
               )}
             </div>
           </CollapsibleSection>
+          )}
         </div>
 
         {/* ═══ Advanced JSON override ═══ */}
