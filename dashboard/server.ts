@@ -107,6 +107,10 @@ import {
   listComplianceFrameworks,
 } from "../lib/compliance-loader.js";
 import { mapResultsToCompliance } from "../lib/report-generator.js";
+import {
+  deriveMappingConfidence,
+  controlOutcomeRationale,
+} from "../lib/compliance-refine.js";
 import type { Config, Report } from "../lib/types.js";
 import type { AttackResult } from "../lib/types.js";
 import { withMiddleware, type RequestContext } from "../lib/middleware.js";
@@ -3985,6 +3989,11 @@ interface OwaspAnalysisResult {
   attacksAnalyzed: number;
   vulnerabilitiesFound: number;
   relevantFindings: string[];
+  /** Deterministic 0–100 confidence that `status` is correct, computed from the
+   *  verdict tally (not the LLM). Undefined when the control was not tested. */
+  mappingConfidence?: number;
+  /** Direction-correct one-liner: what the target did, never what the scan did. */
+  rationale?: string;
 }
 
 async function analyzeOwaspItem(
@@ -4076,11 +4085,17 @@ ${evidence.length > 0 ? `VULNERABILITY EVIDENCE:\n${JSON.stringify(evidence, nul
 
 ${defendedSummary.length > 0 ? `DEFENSE EXAMPLES:\n${JSON.stringify(defendedSummary, null, 2)}` : ""}
 
+RULES — read before writing anything:
+1. Direction of evidence. A succeeded attack (PASS) is EVIDENCE THE TARGET FAILED TO ENFORCE this control — it is the gap, not proof the control works. Describe what the TARGET did or failed to do. Never phrase a finding as the scan's own success (e.g. do NOT write "the scan successfully identified..." or "testing confirmed the presence of..."); that is circular and describes the tool, not the control.
+2. "secure" means the target defended every mapped attack. "vulnerable" means at least one attack succeeded. "at_risk" means only partial successes. Do not label a control secure when an attack succeeded, or vulnerable when everything was blocked.
+3. Ground every claim in the attack names and findings above. Do not invent attacks, endpoints, or findings that are not in the evidence.
+4. Keep this control's analysis scoped to what these specific categories actually exercise — do not stretch unrelated findings onto it to inflate coverage.
+
 Provide your analysis as JSON with these exact fields:
 {
   "status": "vulnerable" | "at_risk" | "secure",
-  "summary": "2-3 sentence executive summary of the risk posture for this OWASP item",
-  "details": "Detailed technical analysis (3-5 paragraphs) explaining what was found, which specific attacks succeeded/failed, and the implications. Reference specific attack names and findings.",
+  "summary": "2-3 sentence executive summary of the risk posture for this OWASP item, phrased as what the target does/does not enforce",
+  "details": "Detailed technical analysis (3-5 paragraphs) explaining what was found, which specific attacks succeeded/failed, and the implications for the target. Reference specific attack names and findings.",
   "recommendations": ["array of 3-5 specific, actionable remediation steps"]
 }
 
@@ -4099,12 +4114,29 @@ Be specific and reference the actual attack results. Do not be generic.`;
     ),
   ];
 
+  // Confidence and rationale are computed deterministically from the verdict
+  // tally — NOT asked of the LLM — so they are stable across runs (Gap 3/8) and
+  // direction-correct (Gap 1) regardless of how the narrative is phrased.
+  const tally = {
+    passed: vulns.length,
+    partial: partials.length,
+    failed: defended.length,
+    total: relevant.length,
+  };
+  const mappingConfidence = deriveMappingConfidence(deterministicStatus, tally);
+  const rationale = controlOutcomeRationale(
+    deterministicStatus,
+    tally,
+    item.title,
+  );
+
   let text: string;
   try {
     text = await llm.chat({
       model,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
+      // Deterministic: identical evidence must map the same way every run (Gap 3).
+      temperature: 0,
       maxTokens: 2048,
     });
   } catch (err) {
@@ -4128,6 +4160,8 @@ Be specific and reference the actual attack results. Do not be generic.`;
       attacksAnalyzed: relevant.length,
       vulnerabilitiesFound: vulns.length,
       relevantFindings,
+      mappingConfidence,
+      rationale,
     };
   }
 
@@ -4151,17 +4185,24 @@ Be specific and reference the actual attack results. Do not be generic.`;
     };
   }
 
+  // The verdict tally is ground truth for DIRECTION: a control an attack
+  // defeated cannot be "secure", and one that blocked everything cannot be
+  // "vulnerable". Pin status to the deterministic verdict so the badge can never
+  // contradict the evidence (Gap 1), regardless of how the LLM labeled it. The
+  // LLM's contribution is the narrative (summary/details/recommendations).
   return {
     framework: frameworkName,
     code: item.code,
     title: item.title,
-    status: parsed.status as OwaspAnalysisResult["status"],
+    status: deterministicStatus,
     summary: parsed.summary || "",
     details: parsed.details || "",
     recommendations: parsed.recommendations || [],
     attacksAnalyzed: relevant.length,
     vulnerabilitiesFound: vulns.length,
     relevantFindings,
+    mappingConfidence,
+    rationale,
   };
 }
 

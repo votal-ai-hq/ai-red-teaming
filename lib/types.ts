@@ -946,6 +946,17 @@ export interface ComplianceResult {
   failed: number;
   status: "vulnerable" | "at_risk" | "secure" | "not_tested";
   findings: string[];
+  /** Highest outcome-based severity among the attacks that landed on this
+   *  control (undefined when nothing succeeded). Lets a row be acted on without
+   *  going back to the source scan. */
+  severity?: "critical" | "high" | "medium" | "low";
+  /** Deterministic 0–100 confidence that `status` is correct, derived from the
+   *  evidence (agreement + volume) rather than a decorative constant. Undefined
+   *  when the control was not tested. */
+  confidence?: number;
+  /** One-line, direction-correct explanation of the outcome — what the target
+   *  did, never what the scanner did. */
+  rationale?: string;
   /** Attack categories this control maps to — the basis for coverage, shown
    *  even when the control is not_tested so users see what WOULD exercise it. */
   categories?: AttackCategory[];
