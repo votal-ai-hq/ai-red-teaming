@@ -576,18 +576,18 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
         className="cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
       >
-        <TableCell className="text-sm">
-          <span className="inline-flex items-center gap-1.5">
+        <TableCell className="text-sm align-top whitespace-normal">
+          <span className="flex items-start gap-1.5">
             {expanded ? (
-              <ChevronDown size={14} className="text-muted-foreground" />
+              <ChevronDown size={14} className="mt-0.5 shrink-0 text-muted-foreground" />
             ) : (
-              <ChevronRight size={14} className="text-muted-foreground" />
+              <ChevronRight size={14} className="mt-0.5 shrink-0 text-muted-foreground" />
             )}
-            <span className={`w-2 h-2 rounded-full ${verdictDotColor(result.verdict)}`} />
-            {getAttackName(result)}
+            <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${verdictDotColor(result.verdict)}`} />
+            <span className="min-w-0 break-words">{getAttackName(result)}</span>
           </span>
         </TableCell>
-        <TableCell className="text-sm text-muted-foreground">{prettyCat(getCategory(result) || "-")}</TableCell>
+        <TableCell className="text-sm text-muted-foreground align-top whitespace-normal break-words">{prettyCat(getCategory(result) || "-")}</TableCell>
         <TableCell>
           <Badge variant={severityVariant(getSeverity(result) || "unknown")}>{getSeverity(result) || "unknown"}</Badge>
         </TableCell>
@@ -595,10 +595,9 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
           <Badge variant={verdictBadge(result.verdict).variant} className={verdictBadge(result.verdict).className}>{verdictLabel(result.verdict)}</Badge>
         </TableCell>
         <TableCell className="text-sm text-muted-foreground max-w-xs align-top">
-          {/* Wrap to a few readable lines instead of a single truncated line so
-              the reasoning is legible in the table itself; the row still expands
-              for the full text (and the PDF always shows it in full). */}
-          <span className="line-clamp-3 whitespace-normal break-words">
+          {/* Show the full reasoning in the cell (no clamp) so it never cuts off
+              mid-sentence; the fixed 40% column keeps it wrapping neatly. */}
+          <span className="whitespace-normal break-words">
             {result.llmReasoning || result.reasoning || "-"}
           </span>
         </TableCell>
@@ -606,7 +605,10 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
 
       {expanded && (
         <TableRow className="bg-muted/20">
-          <TableCell colSpan={5} className="px-6 py-5">
+          {/* whitespace-normal overrides TableCell's default `whitespace-nowrap`,
+              which otherwise inherits into every child (findings, policy lists,
+              threat description) and makes long text render as one clipped line. */}
+          <TableCell colSpan={5} className="px-6 py-5 whitespace-normal">
             <div className="space-y-4">
               {/* ── Top bar: verdict + severity + category + response time ── */}
               <div className="flex flex-wrap items-center gap-2">
@@ -1247,22 +1249,27 @@ function ReportDetail({ filename }: { filename: string }) {
               <div className="px-4 py-2 text-xs text-muted-foreground">
                 Showing {(findingsPage - 1) * perPage + 1}-{Math.min(findingsPage * perPage, totalFindings)} of {totalFindings} findings
               </div>
-              <Table>
+              {/* table-fixed + explicit column widths keep the table locked to
+                  the container width. Without it, `table-layout: auto` sizes
+                  columns to content (ignoring max-width on <td>), so long
+                  reasoning/attack names blow the table past the viewport and the
+                  expanded detail — which spans all columns — overflows with it. */}
+              <Table className="table-fixed w-full">
                 <TableHeader>
                   <TableRow className="bg-muted/40">
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider">
+                    <TableHead className="w-[24%] text-xs font-semibold uppercase tracking-wider">
                       Attack Name
                     </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider">
+                    <TableHead className="w-[15%] text-xs font-semibold uppercase tracking-wider">
                       Category
                     </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider">
+                    <TableHead className="w-[10%] text-xs font-semibold uppercase tracking-wider">
                       Severity
                     </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider">
+                    <TableHead className="w-[11%] text-xs font-semibold uppercase tracking-wider">
                       Verdict
                     </TableHead>
-                    <TableHead className="text-xs font-semibold uppercase tracking-wider">
+                    <TableHead className="w-[40%] text-xs font-semibold uppercase tracking-wider">
                       Reasoning
                     </TableHead>
                   </TableRow>
