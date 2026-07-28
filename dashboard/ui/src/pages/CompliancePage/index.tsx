@@ -79,6 +79,20 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/** Sort rank for a control's status: tested controls first (most severe first),
+ *  with not_tested last. Used to order controls within each framework so the
+ *  ones that actually ran surface at the top. */
+const CONTROL_STATUS_RANK: Record<string, number> = {
+  vulnerable: 0,
+  at_risk: 1,
+  secure: 2,
+  error: 3,
+  not_tested: 4,
+};
+function controlStatusRank(status: string): number {
+  return CONTROL_STATUS_RANK[status] ?? CONTROL_STATUS_RANK.not_tested;
+}
+
 function scoreBadgeClasses(score: number): string {
   if (score >= 80)
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
@@ -212,6 +226,15 @@ export default function CompliancePage() {
   displayResults.forEach((r) => {
     if (!grouped[r.framework]) grouped[r.framework] = [];
     grouped[r.framework].push(r);
+  });
+  // Within each framework, float the tested controls to the top (most severe
+  // first) and leave not_tested ones below, so the user can spot what actually
+  // ran without hunting. Array.sort is stable, so controls that share a status
+  // keep their original (article-number) order.
+  Object.values(grouped).forEach((controls) => {
+    controls.sort(
+      (a, b) => controlStatusRank(a.status) - controlStatusRank(b.status),
+    );
   });
 
   // Summary counts

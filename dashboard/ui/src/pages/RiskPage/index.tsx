@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Shield, AlertTriangle, Play, Search } from "lucide-react";
+import { Shield, AlertTriangle, Play, Search, ChevronDown, ChevronRight } from "lucide-react";
 
 /* ---------- helpers (unchanged logic) ---------- */
 
@@ -133,6 +133,82 @@ const severityBorderColors: Record<string, string> = {
   unknown: "border-l-gray-400 dark:border-l-gray-500",
 };
 
+/* ---------- AI risk analysis: single labelled prose field ---------- */
+function RiskField({ label, value }: { label: string; value?: string }) {
+  if (!value || !value.trim()) return null;
+  return (
+    <div>
+      <span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+        {label}
+      </span>
+      <p className="text-[13px] leading-relaxed text-foreground whitespace-pre-wrap break-words">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/* ---------- AI risk analysis: one compact, expandable row ----------
+   Mirrors the Reports finding-row pattern: a scannable header (name,
+   category, impact badge, financial exposure, one-line preview) that
+   expands to the full prose breakdown. */
+function RiskResultRow({ result }: { result: RiskAnalysisResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const impact = result.impactLevel?.trim();
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground truncate">
+              {result.attack}
+            </span>
+            {result.category && (
+              <span className="text-xs text-muted-foreground shrink-0">
+                {result.category}
+              </span>
+            )}
+          </div>
+          {!expanded && result.businessImpact && (
+            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+              {result.businessImpact}
+            </p>
+          )}
+        </div>
+        {impact && (
+          <Badge variant={severityBadgeVariant(impact)} className="shrink-0 uppercase">
+            {impact}
+          </Badge>
+        )}
+        {result.financialExposure && (
+          <span className="hidden sm:inline text-sm font-medium text-foreground tabular-nums shrink-0">
+            {result.financialExposure}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 pt-1 space-y-3 bg-muted/20 dark:bg-muted/10 border-t border-border/60">
+          <RiskField label="Business Impact" value={result.businessImpact} />
+          <RiskField label="Financial Exposure" value={result.financialExposure} />
+          <RiskField label="Remediation Estimate" value={result.remediationEstimate} />
+          <RiskField label="Related Incidents" value={result.relatedIncidents} />
+          <RiskField label="Compliance Risk" value={result.complianceRisk} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========== component ========== */
 
 export default function RiskPage() {
@@ -147,6 +223,11 @@ export default function RiskPage() {
   const setAnalysis = useRiskStore((s) => s.setAnalysis);
   const [fullReport, setFullReport] = useState<FullReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  // True from the moment "Run AI Risk Analysis" is clicked until streaming
+  // takes over — covers the initial request round-trip (the slow LLM call)
+  // that `isStreaming` alone doesn't account for.
+  const [submitting, setSubmitting] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Which report the in-flight/just-finished stream belongs to, so we never
   // display or persist one report's analysis against another.
@@ -206,8 +287,20 @@ export default function RiskPage() {
       }))
     );
     analyzedFileRef.current = selectedFile;
-    const response = await analyzeRisk(attacks);
-    start(response);
+    setRunError(null);
+    setSubmitting(true);
+    try {
+      const response = await analyzeRisk(attacks);
+      // `start` flips `isStreaming` on and resolves once the stream ends, so
+      // the button/loader stay active across the whole run with no gap.
+      await start(response);
+    } catch (err) {
+      setRunError(
+        err instanceof Error ? err.message : "Failed to start risk analysis",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }, [fullReport, selectedFile, start]);
 
   if (loading) {
@@ -253,6 +346,10 @@ export default function RiskPage() {
   const displayResults = liveForSelected
     ? riskResults
     : analyses[selectedFile] ?? [];
+
+  // Busy = request in flight OR results streaming. Drives the button label and
+  // the in-card "Analyzing…" indicator so the UI reacts the instant it's clicked.
+  const busy = submitting || isStreaming;
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -540,10 +637,10 @@ export default function RiskPage() {
                 </CardTitle>
                 <button
                   onClick={handleRunAI}
-                  disabled={isStreaming}
+                  disabled={busy}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
-                  {isStreaming ? (
+                  {busy ? (
                     <>
                       <LoadingSpinner size="sm" />
                       Analyzing...
@@ -558,80 +655,29 @@ export default function RiskPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {streamError && (
+              {(streamError || runError) && (
                 <div className="mb-4 px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
-                  {streamError}
+                  {streamError || runError}
                 </div>
               )}
 
               {displayResults.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {displayResults.map((result, i) => (
-                    <div
-                      key={`${result.attack}-${i}`}
-                      className="border border-border rounded-lg p-4 space-y-2 bg-muted/30 dark:bg-muted/10"
-                    >
-                      <h4 className="font-semibold text-foreground text-sm">
-                        {result.attack}
-                      </h4>
-                      <p className="text-xs text-muted-foreground">
-                        {result.category}
-                      </p>
-                      <div className="grid grid-cols-2 gap-2 pt-2">
-                        <div>
-                          <span className="block text-xs text-muted-foreground">
-                            Impact Level
-                          </span>
-                          <span className="text-sm font-medium text-foreground">
-                            {result.impactLevel}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="block text-xs text-muted-foreground">
-                            Business Impact
-                          </span>
-                          <span className="text-sm font-medium text-foreground">
-                            {result.businessImpact}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="block text-xs text-muted-foreground">
-                            Financial Exposure
-                          </span>
-                          <span className="text-sm font-medium text-foreground">
-                            {result.financialExposure}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="block text-xs text-muted-foreground">
-                            Remediation Estimate
-                          </span>
-                          <span className="text-sm font-medium text-foreground">
-                            {result.remediationEstimate}
-                          </span>
-                        </div>
-                      </div>
-                      {result.complianceRisk && (
-                        <div className="pt-1">
-                          <span className="block text-xs text-muted-foreground">
-                            Compliance Risk
-                          </span>
-                          <span className="text-sm text-foreground">
-                            {result.complianceRisk}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                    <RiskResultRow key={`${result.attack}-${i}`} result={result} />
                   ))}
                 </div>
+              ) : busy ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
+                  <LoadingSpinner size="lg" />
+                  <span className="text-sm">Analyzing risk with AI…</span>
+                </div>
               ) : (
-                !isStreaming && (
-                  <EmptyState
-                    title="No AI analysis yet"
-                    description="Click 'Run AI Risk Analysis' to get detailed risk insights powered by AI."
-                    icon={<Shield className="w-12 h-12" />}
-                  />
-                )
+                <EmptyState
+                  title="No AI analysis yet"
+                  description="Click 'Run AI Risk Analysis' to get detailed risk insights powered by AI."
+                  icon={<Shield className="w-12 h-12" />}
+                />
               )}
             </CardContent>
           </Card>
