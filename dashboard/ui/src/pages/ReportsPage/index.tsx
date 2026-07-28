@@ -652,7 +652,7 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
               {hasInteraction && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {requestText && (
-                    <div className="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/30 dark:bg-blue-950/10 p-3">
+                    <div className="min-w-0 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/30 dark:bg-blue-950/10 p-3">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-1.5 flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                         Request
@@ -663,7 +663,7 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                   {/* Always render the Response panel for an interaction — with a
                       placeholder when the agent produced no text (e.g. the output
                       was via tool calls / a side-channel). */}
-                  <div className="rounded-lg border border-border bg-card p-3">
+                  <div className="min-w-0 rounded-lg border border-border bg-card p-3">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
                       Response
@@ -685,7 +685,7 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
               {(result.llmEvidenceFor || result.llmEvidenceAgainst) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {result.llmEvidenceFor && (
-                    <div className="rounded-lg border border-red-200 dark:border-red-900 bg-red-50/30 dark:bg-red-950/10 p-3">
+                    <div className="min-w-0 rounded-lg border border-red-200 dark:border-red-900 bg-red-50/30 dark:bg-red-950/10 p-3">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-red-600 dark:text-red-400 mb-1.5 flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
                         Evidence For Vulnerability
@@ -694,7 +694,7 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                     </div>
                   )}
                   {result.llmEvidenceAgainst && (
-                    <div className="rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/30 dark:bg-emerald-950/10 p-3">
+                    <div className="min-w-0 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/30 dark:bg-emerald-950/10 p-3">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1.5 flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         Evidence Against (Defense)
@@ -755,7 +755,12 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                   {result.llmReasoning && (
                     <div className="min-w-0 flex-1 basis-full">
                       <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">LLM Reasoning</div>
-                      <ExpandableText text={result.llmReasoning} maxLines={6} />
+                      {/* Show the full reasoning once the row is expanded — no
+                          secondary clamp — so it matches the downloadable report
+                          instead of cutting off mid-sentence. */}
+                      <p className="text-[13px] text-foreground whitespace-pre-wrap break-words leading-relaxed">
+                        {result.llmReasoning}
+                      </p>
                     </div>
                   )}
                 </div>
