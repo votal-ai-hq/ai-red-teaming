@@ -563,7 +563,7 @@ export default function RunsPage() {
                                 {typeof p.index === "number" ? p.index + 1 : i + 1}
                               </span>
                               <span className="text-foreground truncate flex-1">
-                                {String(p.attackName ?? (p.result as Record<string, unknown> | undefined)?.attack ?? "—")}
+                                {String(p.attackName ?? (p.result as Record<string, unknown> | undefined)?.name ?? "—")}
                               </span>
                               <span className="text-muted-foreground shrink-0">{String(p.category ?? "")}</span>
                               <span className={`font-semibold shrink-0 ${verdictColor(String(p.verdict ?? ""))}`}>
@@ -621,7 +621,7 @@ export default function RunsPage() {
                               {attackItems.map((p, i) => {
                                 const result = p.result as Record<string, unknown> | undefined;
                                 const attack = result?.attack as Record<string, unknown> | undefined;
-                                const name = String(p.attackName ?? attack?.name ?? result?.attackName ?? "—");
+                                const name = String(p.attackName ?? result?.name ?? attack?.name ?? result?.attackName ?? "—");
                                 const cat = String(p.category ?? attack?.category ?? result?.category ?? "");
                                 const vrd = String(p.verdict ?? result?.verdict ?? "");
                                 const idx = typeof p.index === "number" ? p.index : i;

@@ -1312,6 +1312,19 @@ const server = createServer(
 
       if (job) {
         const effectiveStatus = getJobStatus(job);
+        // The UI treats `progressTotal` as the denominator for "N attacks / total",
+        // so it must count *attacks*, not raw progress-log entries (which also
+        // include phase/round/message events). Once the run reaches a terminal
+        // state, snap to the exact attack count; while it's still active, fall
+        // back to the planned estimate so the progress bar can fill toward it.
+        const attacksSoFar = job.progress.filter((p) => p.result).length;
+        const isTerminal =
+          effectiveStatus === "done" ||
+          effectiveStatus === "error" ||
+          effectiveStatus === "cancelled";
+        const attackTotal = isTerminal
+          ? attacksSoFar
+          : Math.max(attacksSoFar, job.estimatedTotal ?? attacksSoFar);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
@@ -1321,7 +1334,7 @@ const server = createServer(
             finishedAt: job.finishedAt,
             targetUrl: describeTarget(job.config),
             error: job._cancelled ? "Cancelled by user" : job.error,
-            progressTotal: job.progress.length,
+            progressTotal: attackTotal,
             progress: slimProgressForTransit(job.progress.slice(since)),
             reportFile: job.reportFile,
             summary: job.report?.summary,
