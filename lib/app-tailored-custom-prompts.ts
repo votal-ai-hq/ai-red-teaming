@@ -79,7 +79,7 @@ REALISM:
 
   try {
     const llm = getLlmProvider(config);
-    const text = await llm.chat({
+    const text = await llm.chat({ phase: "generation",
       model: config.attackConfig.llmModel,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.85,

@@ -23,6 +23,7 @@ import {
 } from "./attack-runner.js";
 import { analyzeResponse, type AppContext } from "./response-analyzer.js";
 import { generateReport, writeReport } from "./report-generator.js";
+import { UsageCollector, withUsageContext, formatUsageSummary } from "./llm-usage.js";
 import {
   mkdirSync,
   writeFileSync,
@@ -666,6 +667,21 @@ export async function runRedTeam(
   onProgress?: (p: RunProgress) => void,
   configDir?: string,
   signal?: AbortSignal,
+): Promise<RunResult> {
+  // Scope a fresh usage collector to this run's async context so concurrent
+  // scans stay isolated, then run the implementation inside it.
+  const usageCollector = new UsageCollector();
+  return withUsageContext(usageCollector, () =>
+    runRedTeamImpl(config, onProgress, configDir, signal, usageCollector),
+  );
+}
+
+async function runRedTeamImpl(
+  config: Config,
+  onProgress: ((p: RunProgress) => void) | undefined,
+  configDir: string | undefined,
+  signal: AbortSignal | undefined,
+  usageCollector: UsageCollector,
 ): Promise<RunResult> {
   const log = (
     phase: string,
@@ -1688,6 +1704,14 @@ export async function runRedTeam(
         }
       : undefined,
   );
+  // Attach the per-scan LLM usage metrics (real tokens/latency/errors + an
+  // estimated cost) so they persist in the report JSON and surface in the CLI
+  // and dashboard. Must run before writeReport so the metrics are saved.
+  report.usage = usageCollector.summarize();
+  for (const line of formatUsageSummary(report.usage)) {
+    console.log(line);
+  }
+
   // Skip file write when DB is configured (server stores to DB instead)
   let jsonPath = "";
   let mdPath = "";

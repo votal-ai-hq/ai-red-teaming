@@ -1161,7 +1161,7 @@ IMPORTANT: Write the message as a natural, realistic user request — not as an 
 Return ONLY the next user message, no explanation or formatting.`;
 
   try {
-    const response = await llm.chat({
+    const response = await llm.chat({ phase: "generation",
       model: config.attackConfig.llmModel,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.8,

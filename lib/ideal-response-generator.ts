@@ -91,7 +91,7 @@ ${result.llmReasoning ? `\nJUDGE REASONING:\n${result.llmReasoning}` : ""}`;
       judgeProviderName !== "nim" &&
       judgeProviderName !== "huggingface";
     const llm = getJudgeProvider(config);
-    const text = await llm.chat({
+    const text = await llm.chat({ phase: "ideal-response",
       model: judgeModel,
       messages: [
         {

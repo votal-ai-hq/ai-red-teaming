@@ -116,6 +116,45 @@ export interface ReportFinding {
   attack: string;
 }
 
+// ── Per-scan LLM usage metrics (report.usage) ──
+export interface UsageByPhase {
+  phase: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  latencyMs: number;
+  costUsd: number | null;
+}
+
+export interface UsageByModel {
+  provider: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  latencyMs: number;
+  costUsd: number | null;
+  priced: boolean;
+}
+
+export interface UsageSummary {
+  totalCalls: number;
+  failedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  tokensComplete: boolean;
+  costUsd: number | null;
+  costComplete: boolean;
+  unpricedModels: string[];
+  llmLatencyMsTotal: number;
+  errorsByKind: { rate_limit: number; timeout: number; other: number };
+  byPhase: UsageByPhase[];
+  byModel: UsageByModel[];
+}
+
 export interface FullReport {
   id?: string;
   filename?: string;
@@ -133,6 +172,8 @@ export interface FullReport {
   llmAnalysis?: string;
   findings?: ReportFinding[];
   attackCategories?: string[];
+  /** Per-scan LLM usage metrics. Absent on reports from before this shipped. */
+  usage?: UsageSummary;
 }
 
 // ── Runs ──

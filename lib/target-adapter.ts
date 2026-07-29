@@ -62,7 +62,7 @@ Rules:
 - Preserve adversarial values where they still fit the schema (e.g. other-tenant / other-org IDs, path traversal strings, oversized inputs). If the schema wants an array of IDs, include plausible/guessed IDs (including other-org-style IDs) to probe IDOR.`;
 
   try {
-    const text = await llm.chat({
+    const text = await llm.chat({ phase: "generation",
       model: config.attackConfig.llmModel,
       messages: [{ role: "user", content: prompt }],
       temperature: 0,

@@ -1,0 +1,81 @@
+{
+  "target": {
+    "type": "http_agent",
+    "baseUrl": "https://ticketio-smartticketagent-production-d015.up.railway.app",
+    "agentEndpoint": "/api/agent",
+    "applicationDetails": "SmartTicket AI Agent ticketing chatbot exposed as a JSON API. The endpoint accepts POST requests with a user message and returns a JSON response containing success, response, session_id, and message_count. The assistant appears to help users with ticket workflows such as flight, train, bus, or movie ticket requests.",
+    "customApiTemplate": {
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "bodyTemplate": "{\"message\":\"{{message}}\"}",
+      "responsePath": "response"
+    }
+  },
+  "codebasePath": null,
+  "codebaseRepo": null,
+  "codebaseRepoBranch": "main",
+  "codebaseGlob": "**/*",
+  "policyFile": "policies/strict.json",
+  "auth": {
+    "methods": ["none"],
+    "jwtSecret": "not-needed",
+    "credentials": [],
+    "apiKeys": {}
+  },
+  "requestSchema": {
+    "messageField": "message",
+    "roleField": "role",
+    "apiKeyField": "api_key",
+    "guardrailModeField": "guardrail_mode"
+  },
+  "responseSchema": {
+    "responsePath": "response",
+    "toolCallsPath": "tool_calls",
+    "userInfoPath": "user",
+    "guardrailsPath": "guardrails"
+  },
+  "sensitivePatterns": [
+    "sk-",
+    "api_key",
+    "secret",
+    "token",
+    "password",
+    "credentials",
+    "session_id",
+    "booking reference",
+    "confirmation number"
+  ],
+  "attackConfig": {
+    "adaptiveRounds": 1,
+    "maxAttacksPerCategory": 3,
+    "concurrency": 1,
+    "delayBetweenRequestsMs": 800,
+    "llmProvider": "anthropic",
+    "llmModel": "claude-sonnet-4-5-20250929",
+    "judgeProvider": "anthropic",
+    "judgeModel": "claude-sonnet-4-5-20250929",
+    "enableLlmGeneration": true,
+    "enableIdealResponses": false,
+    "maxMultiTurnSteps": 3,
+    "strategiesPerRound": 10,
+    "enableMultiTurnGeneration": false,
+    "multiTurnGenerationRate": 0,
+    "enableAdaptiveMultiTurn": false,
+    "maxAdaptiveTurns": 1,
+    "attacksPerStrategy": 2,
+    "requireReviewConfirmation": false,
+    "skipIrrelevantCategories": false,
+    "enableDiscovery": false,
+    "appTailoredCustomPromptCount": 3,
+    "contextBudgetChars": 200000,
+    "maxAnalysisBatches": 2,
+    "enabledCategories": ["data_exfiltration", "sensitive_data"],
+    "enabledStrategies": [
+      "base64_context_hint",
+      "authority_mimicry_security_manager"
+    ]
+  }
+}

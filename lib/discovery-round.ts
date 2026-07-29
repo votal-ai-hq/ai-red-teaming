@@ -476,7 +476,7 @@ Be aggressive — extract EVERY piece of useful information, even if implied or 
       providerName !== "together" &&
       providerName !== "nim" &&
       providerName !== "huggingface";
-    const text = await llm.chat({
+    const text = await llm.chat({ phase: "discovery",
       model,
       messages: [
         {

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import type { Config } from "./types.js";
 import { formatErrorDetails } from "./error-utils.js";
+import { recordLlmUsage, classifyLlmError } from "./llm-usage.js";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -15,6 +16,8 @@ export interface ChatOptions {
   maxTokens?: number;
   /** Request JSON output from the model (OpenAI/OpenRouter only). */
   responseFormat?: "json_object";
+  /** Coarse phase label for per-scan usage attribution (generation, judging, analysis, …). */
+  phase?: string;
 }
 
 export interface LlmProvider {
@@ -23,6 +26,8 @@ export interface LlmProvider {
 
 interface OpenAICompatibleRequestConfig {
   guardrails?: string[];
+  /** Provider label for usage attribution, injected by createProvider(). */
+  providerName?: string;
 }
 
 type TokenLimitField = "max_tokens" | "max_completion_tokens";
@@ -95,6 +100,33 @@ async function createOpenAICompatibleChatCompletion(
     : "max_tokens";
   const initialOmitTemperature = shouldOmitTemperature(options.model);
 
+  // ── usage instrumentation ──
+  const startedAt = Date.now();
+  const providerName = requestConfig.providerName ?? "openai";
+  const recordOk = (
+    usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
+  ) =>
+    recordLlmUsage({
+      provider: providerName,
+      model: options.model,
+      phase: options.phase,
+      inputTokens: usage?.prompt_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+      latencyMs: Date.now() - startedAt,
+      ok: true,
+      tokensReported: !!usage,
+    });
+  const recordFail = (error: unknown) =>
+    recordLlmUsage({
+      provider: providerName,
+      model: options.model,
+      phase: options.phase,
+      latencyMs: Date.now() - startedAt,
+      ok: false,
+      errorKind: classifyLlmError(error),
+      tokensReported: false,
+    });
+
   try {
     const response = await client.chat.completions.create(
       buildOpenAIChatRequest(
@@ -104,6 +136,7 @@ async function createOpenAICompatibleChatCompletion(
         initialOmitTemperature,
       ),
     );
+    recordOk(response.usage);
     return response.choices[0]?.message?.content?.trim() ?? "";
   } catch (error) {
     const retryAlternateTokenField = shouldRetryWithAlternateTokenField(error);
@@ -111,6 +144,7 @@ async function createOpenAICompatibleChatCompletion(
       !initialOmitTemperature && shouldRetryWithoutTemperature(error);
 
     if (!retryAlternateTokenField && !retryWithoutTemperature) {
+      recordFail(error);
       const details = formatErrorDetails(error);
       const enriched = new Error(`LLM request failed: ${details}`);
       (enriched as any).skipConfig = true; // prevent duplicate [config] lines
@@ -123,15 +157,21 @@ async function createOpenAICompatibleChatCompletion(
         : retryAlternateTokenField
           ? "max_tokens"
           : initialTokenLimitField;
-    const response = await client.chat.completions.create(
-      buildOpenAIChatRequest(
-        options,
-        fallbackTokenLimitField,
-        requestConfig,
-        initialOmitTemperature || retryWithoutTemperature,
-      ),
-    );
-    return response.choices[0]?.message?.content?.trim() ?? "";
+    try {
+      const response = await client.chat.completions.create(
+        buildOpenAIChatRequest(
+          options,
+          fallbackTokenLimitField,
+          requestConfig,
+          initialOmitTemperature || retryWithoutTemperature,
+        ),
+      );
+      recordOk(response.usage);
+      return response.choices[0]?.message?.content?.trim() ?? "";
+    } catch (retryError) {
+      recordFail(retryError);
+      throw retryError;
+    }
   }
 }
 
@@ -170,6 +210,17 @@ class AnthropicProvider implements LlmProvider {
   }
 
   async chat(options: ChatOptions): Promise<string> {
+    const startedAt = Date.now();
+    const recordFail = (error: unknown) =>
+      recordLlmUsage({
+        provider: "anthropic",
+        model: options.model,
+        phase: options.phase,
+        latencyMs: Date.now() - startedAt,
+        ok: false,
+        errorKind: classifyLlmError(error),
+        tokensReported: false,
+      });
     // Separate system message from user/assistant messages
     const systemMsg = options.messages.find((m) => m.role === "system");
     const nonSystemMsgs = options.messages.filter((m) => m.role !== "system");
@@ -211,6 +262,7 @@ class AnthropicProvider implements LlmProvider {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
+        recordFail(fetchErr);
         throw new Error(
           `Anthropic API network error after ${MAX_RETRIES} retries: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         );
@@ -233,19 +285,35 @@ class AnthropicProvider implements LlmProvider {
 
       if (!response.ok) {
         const err = await response.text();
-        throw new Error(`Anthropic API error ${response.status}: ${err}`);
+        const apiError = new Error(`Anthropic API error ${response.status}: ${err}`);
+        (apiError as { status?: number }).status = response.status;
+        recordFail(apiError);
+        throw apiError;
       }
 
       const data = (await response.json()) as {
         content: { type: string; text: string }[];
+        usage?: { input_tokens?: number; output_tokens?: number };
       };
       const textBlock = data.content.find((b) => b.type === "text");
+      recordLlmUsage({
+        provider: "anthropic",
+        model: options.model,
+        phase: options.phase,
+        inputTokens: data.usage?.input_tokens ?? 0,
+        outputTokens: data.usage?.output_tokens ?? 0,
+        latencyMs: Date.now() - startedAt,
+        ok: true,
+        tokensReported: !!data.usage,
+      });
       return textBlock?.text?.trim() ?? "";
     }
 
-    throw new Error(
+    const exhausted = new Error(
       "Anthropic API error: max retries exceeded (529 Overloaded)",
     );
+    recordFail(exhausted);
+    throw exhausted;
   }
 }
 
@@ -503,6 +571,8 @@ function createProvider(
   if (providerCache.has(cacheKey)) {
     return providerCache.get(cacheKey)!;
   }
+  // Label the provider so the OpenAI-compatible helper can attribute usage to it.
+  requestConfig.providerName = name;
 
   let provider: LlmProvider;
   switch (name) {
