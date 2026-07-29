@@ -140,6 +140,7 @@ import {
   writeReport,
   printConsoleSummary,
 } from "./lib/report-generator.js";
+import { enterUsageContext, formatUsageSummary } from "./lib/llm-usage.js";
 import { runStaticAnalysis } from "./lib/static-analyzer.js";
 import { analyzeRound } from "./lib/round-analyzer.js";
 import { generateIdealResponse } from "./lib/ideal-response-generator.js";
@@ -324,6 +325,9 @@ async function main() {
   console.log("[1/5] Loading configuration...");
   const config = loadConfig(configPath);
   const configDir = dirname(resolve(configPath ?? "config.json"));
+  // Track LLM usage for this scan (tokens, cost, latency, errors). The CLI is a
+  // single run, so binding the collector to this async context is safe here.
+  const usageCollector = enterUsageContext();
   let customAttacks: Attack[] = [];
   try {
     customAttacks = loadCustomAttacksFromConfig(config, { configDir });
@@ -1353,6 +1357,12 @@ async function main() {
     analysis.affectedFiles,
     discoveryIntel,
   );
+  // Attach + print the per-scan LLM usage metrics (real tokens/latency/errors +
+  // an estimated cost) before writing, so they persist in the report JSON.
+  report.usage = usageCollector.summarize();
+  for (const line of formatUsageSummary(report.usage)) {
+    console.log(line);
+  }
   const { jsonPath, mdPath } = writeReport(report);
   console.log(`  JSON: ${jsonPath}`);
   console.log(`  Markdown: ${mdPath}`);

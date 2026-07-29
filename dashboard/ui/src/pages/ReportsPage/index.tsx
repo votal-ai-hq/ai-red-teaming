@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router";
 import { getReportsMeta, getReport } from "@/api/reports";
 import { getStaticCompliance } from "@/api/compliance";
 import { promoteFinding } from "@/api/datasets";
-import type { ReportMeta, FullReport, ReportResult, ReportSummary, ComplianceResult } from "@/api/types";
+import type { ReportMeta, FullReport, ReportResult, ReportSummary, ComplianceResult, UsageSummary } from "@/api/types";
 import { useDebounce } from "@/hooks/useDebounce";
 import { ScoreRing } from "@/components/shared/ScoreRing";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,8 @@ import {
   FileDown,
   Printer,
   Loader2,
+  Cpu,
+  Coins,
 } from "lucide-react";
 
 /* ─── helpers ─── */
@@ -854,6 +856,177 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
 
 /* ─── Detail Mode ─── */
 
+/* ─── LLM usage panel (report.usage) ─── */
+
+function fmtUsd(n: number | null): string {
+  if (n == null) return "n/a";
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+function fmtDur(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+function UsagePanel({ usage }: { usage: UsageSummary }) {
+  const stats: { label: string; value: string; sub?: string; accent?: string }[] = [
+    {
+      label: "est. cost",
+      value: usage.costUsd == null ? "n/a" : `${fmtUsd(usage.costUsd)}${usage.costComplete ? "" : "+"}`,
+      accent: "text-emerald-600 dark:text-emerald-400",
+    },
+    {
+      label: "tokens",
+      value: fmtTokens(usage.totalTokens),
+      sub: `${fmtTokens(usage.inputTokens)} in / ${fmtTokens(usage.outputTokens)} out`,
+    },
+    { label: "LLM time", value: fmtDur(usage.llmLatencyMsTotal) },
+    { label: "calls", value: String(usage.totalCalls) },
+  ];
+  // Always show the failure metric so it's clear failures are tracked; neutral
+  // at zero (a red "0" reads as alarming), red with a breakdown when > 0.
+  stats.push({
+    label: "failed",
+    value: String(usage.failedCalls),
+    sub:
+      usage.failedCalls > 0
+        ? `${usage.errorsByKind.rate_limit} rate-limit · ${usage.errorsByKind.timeout} timeout · ${usage.errorsByKind.other} other`
+        : "all calls succeeded",
+    accent: usage.failedCalls > 0 ? "text-red-600 dark:text-red-400" : "text-foreground",
+  });
+
+  // Hide the by-phase table until calls carry meaningful phase labels.
+  const showPhases =
+    usage.byPhase.length > 1 ||
+    (usage.byPhase.length === 1 && usage.byPhase[0].phase !== "uncategorized");
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-primary" />
+          LLM Usage
+          <span className="text-xs text-muted-foreground font-normal">
+            what this scan spent on model calls
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-x-8 gap-y-3">
+          {stats.map((s) => (
+            <div key={s.label} className="min-w-0">
+              <div className={`text-2xl font-bold tracking-tight tabular-nums ${s.accent ?? "text-foreground"}`}>
+                {s.value}
+              </div>
+              <div className="text-xs text-muted-foreground">{s.label}</div>
+              {s.sub && <div className="text-[11px] text-muted-foreground/80 mt-0.5">{s.sub}</div>}
+            </div>
+          ))}
+        </div>
+
+        {(!usage.costComplete || !usage.tokensComplete) && (
+          <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+            <Coins className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <div>
+              {!usage.costComplete && usage.unpricedModels.length > 0 && (
+                <div>Cost is a partial estimate — no price for: {usage.unpricedModels.join(", ")}.</div>
+              )}
+              {!usage.tokensComplete && (
+                <div>Some calls didn&rsquo;t report token usage — token totals are a lower bound.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {usage.byModel.length > 0 && (
+          <UsageTable
+            title="By model"
+            rows={usage.byModel.map((m) => ({
+              label: (
+                <span>
+                  <span className="text-muted-foreground">{m.provider}/</span>
+                  <span className="font-medium text-foreground">{m.model}</span>
+                </span>
+              ),
+              key: `${m.provider}/${m.model}`,
+              calls: m.calls,
+              tokens: m.totalTokens,
+              latencyMs: m.latencyMs,
+              costUsd: m.costUsd,
+            }))}
+          />
+        )}
+
+        {showPhases && (
+          <UsageTable
+            title="By phase"
+            rows={usage.byPhase.map((p) => ({
+              label: <span className="font-medium text-foreground">{p.phase}</span>,
+              key: p.phase,
+              calls: p.calls,
+              tokens: p.totalTokens,
+              latencyMs: p.latencyMs,
+              costUsd: p.costUsd,
+            }))}
+          />
+        )}
+
+        <p className="text-[11px] text-muted-foreground/70">
+          Tokens, latency and calls are measured. Cost is an estimate (tokens × a
+          per-model price table) — labelled &ldquo;est.&rdquo;.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UsageTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: { key: string; label: ReactNode; calls: number; tokens: number; latencyMs: number; costUsd: number | null }[];
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+        {title}
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+              <th className="py-1.5 px-3 font-medium">{title.replace("By ", "")}</th>
+              <th className="py-1.5 px-3 font-medium text-right">Calls</th>
+              <th className="py-1.5 px-3 font-medium text-right">Tokens</th>
+              <th className="py-1.5 px-3 font-medium text-right">Latency</th>
+              <th className="py-1.5 px-3 font-medium text-right">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-t border-border">
+                <td className="py-1.5 px-3">{r.label}</td>
+                <td className="py-1.5 px-3 text-right tabular-nums">{r.calls}</td>
+                <td className="py-1.5 px-3 text-right tabular-nums">{fmtTokens(r.tokens)}</td>
+                <td className="py-1.5 px-3 text-right tabular-nums text-muted-foreground">{fmtDur(r.latencyMs)}</td>
+                <td className="py-1.5 px-3 text-right tabular-nums">
+                  {r.costUsd == null ? <span className="text-muted-foreground">n/a</span> : fmtUsd(r.costUsd)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ReportDetail({ filename }: { filename: string }) {
   const navigate = useNavigate();
   const [report, setReport] = useState<FullReport | null>(null);
@@ -1081,6 +1254,9 @@ function ReportDetail({ filename }: { filename: string }) {
           <strong>Error</strong> = indeterminate, could not complete normally
         </span>
       </div>
+
+      {/* ── LLM Usage (per-scan token/cost/latency metrics) ── */}
+      {report.usage && <UsagePanel usage={report.usage} />}
 
       {/* ── Category Breakdown ── */}
       {categoryEntries.length > 0 && (

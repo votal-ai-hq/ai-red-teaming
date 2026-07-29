@@ -382,7 +382,7 @@ Return a JSON array of objects with "idx" (number) and "message" (rewritten stri
 
     try {
       const llm = getLlmProvider(config);
-      const text = await llm.chat({
+      const text = await llm.chat({ phase: "generation",
         model: config.attackConfig.llmModel,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.9,
@@ -544,7 +544,7 @@ IMPORTANT RULES:
 ${realismFooter}`;
 
   try {
-    const text = await llm.chat({
+    const text = await llm.chat({ phase: "generation",
       model: config.attackConfig.llmModel,
       messages: [
         { role: "system", content: prompt },
@@ -866,7 +866,7 @@ Return ONLY the JSON array, no markdown fences.`;
 
     try {
       const llm = getLlmProvider(config);
-      const text = await llm.chat({
+      const text = await llm.chat({ phase: "generation",
         model: config.attackConfig.llmModel,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.9,

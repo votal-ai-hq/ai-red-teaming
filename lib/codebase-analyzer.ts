@@ -610,7 +610,7 @@ SOURCE CODE:
 ${sourceBundle.join("\n\n")}`;
 
   const llm = getLlmProvider(config);
-  const text = await llm.chat({
+  const text = await llm.chat({ phase: "analysis",
     model: config.attackConfig.llmModel,
     messages: [{ role: "user", content: fullPrompt }],
     temperature: 0.2,

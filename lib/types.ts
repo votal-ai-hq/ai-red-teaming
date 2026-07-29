@@ -1,5 +1,8 @@
 // ── Shared types for the red-team framework ──
 
+import type { UsageSummary } from "./llm-usage.js";
+export type { UsageSummary };
+
 export type AttackCategory =
   | "auth_bypass"
   | "rbac_bypass"
@@ -844,6 +847,13 @@ export interface Report {
   targetUrl: string;
   /** Snapshot of target config for UI rendering (Attack Path graph, etc.). */
   target?: ReportTargetDescriptor;
+  /**
+   * Per-scan LLM usage metrics (tokens, estimated cost, latency, errors) for the
+   * LLM calls this tool made during the run — attack generation, judging, etc.
+   * Tokens/latency/calls are measured; cost is an estimate from a price table.
+   * Absent on runs recorded before this feature shipped. See {@link UsageSummary}.
+   */
+  usage?: UsageSummary;
   /**
    * Provenance of the eval dataset used for this run, when the run's attack set
    * came from a `customAttacksFile`. Enables grouping runs by dataset to track

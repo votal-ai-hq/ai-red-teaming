@@ -1020,7 +1020,7 @@ ${responseBody.slice(0, 10000)}`;
   let text: string | null = null;
   if (supportsJsonMode) {
     try {
-      text = await llm.chat({
+      text = await llm.chat({ phase: "judging",
         model: judgeModel,
         messages: [
           { role: "system", content: systemPrompt },
@@ -1037,7 +1037,7 @@ ${responseBody.slice(0, 10000)}`;
 
   if (!text) {
     try {
-      text = await llm.chat({
+      text = await llm.chat({ phase: "judging",
         model: judgeModel,
         messages: [
           {
