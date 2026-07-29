@@ -18,15 +18,24 @@ function stubChat(): { chat: ChatFn; prompts: string[] } {
         expectedTools: ["lookup"],
       });
     }
-    return "a concrete synthetic attacker message";
+    return '{"bookingId":"BK-1"}';
   };
   return { chat, prompts };
 }
 
+const mcpSeeds = {
+  surfaces: [
+    'tool "get_booking" - schema={"type":"object","properties":{"bookingId":{"type":"string"}},"required":["bookingId"]}',
+  ],
+};
+
 describe("generateWithOpenAI", () => {
   it("produces Data-Designer-shaped records that pass validation", async () => {
     const { chat } = stubChat();
-    const config = buildDataDesignerConfig({ family: "mcp", count: 6 });
+    const config = buildDataDesignerConfig(
+      { family: "mcp", count: 6 },
+      mcpSeeds,
+    );
     const records = await generateWithOpenAI(config, 6, { chat });
 
     expect(records).toHaveLength(6);
@@ -40,18 +49,28 @@ describe("generateWithOpenAI", () => {
     expect(rec.grading).toMatchObject({ successCriteria: expect.any(String) });
 
     // round-trips through the real mapper + validator
-    const { valid, errors } = validateRows(recordsToRows(records, "mcp"));
+    const { valid, errors } = validateRows(recordsToRows(records, "mcp"), {
+      family: "mcp",
+    });
     expect(errors).toEqual([]);
     expect(valid.length).toBeGreaterThan(0);
+    expect(valid[0]).toMatchObject({
+      _mcpOperation: "tools/call",
+      _mcpTool: "get_booking",
+      _mcpArguments: { bookingId: "BK-1" },
+    });
   });
 
   it("round-robins the category axis for even coverage", async () => {
     const { chat } = stubChat();
-    const config = buildDataDesignerConfig({
-      family: "mcp",
-      categories: ["tool_misuse", "debug_access"],
-      count: 4,
-    });
+    const config = buildDataDesignerConfig(
+      {
+        family: "mcp",
+        categories: ["tool_misuse", "debug_access"],
+        count: 4,
+      },
+      mcpSeeds,
+    );
     const records = await generateWithOpenAI(config, 4, { chat });
     const cats = records.map((r) => (r as Record<string, string>).category);
     // 4 rows over 2 categories, round-robined → 2 each
@@ -62,7 +81,7 @@ describe("generateWithOpenAI", () => {
   it("renders {{turns}} into the text prompt for multi-turn configs", async () => {
     const { chat, prompts } = stubChat();
     const config = buildDataDesignerConfig({
-      family: "mcp",
+      family: "agent",
       count: 1,
       turnMode: "multi",
       maxTurns: 3,
@@ -90,7 +109,10 @@ describe("generateWithOpenAI", () => {
 
   it("fires onRow for each completed row (for live streaming)", async () => {
     const { chat } = stubChat();
-    const config = buildDataDesignerConfig({ family: "mcp", count: 5 });
+    const config = buildDataDesignerConfig(
+      { family: "mcp", count: 5 },
+      mcpSeeds,
+    );
     const seen: { index: number; total: number; hasPrompt: boolean }[] = [];
     await generateWithOpenAI(config, 5, {
       chat,
@@ -106,7 +128,7 @@ describe("generateWithOpenAI", () => {
   it("throws without an API key and without an injected chat", async () => {
     const prev = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    const config = buildDataDesignerConfig({ family: "mcp", count: 1 });
+    const config = buildDataDesignerConfig({ family: "agent", count: 1 });
     await expect(generateWithOpenAI(config, 1)).rejects.toThrow(/OPENAI_API_KEY/);
     if (prev !== undefined) process.env.OPENAI_API_KEY = prev;
   });
@@ -116,7 +138,10 @@ describe("generateWithOpenAI", () => {
       json
         ? 'Sure! Here you go:\n{"successCriteria":"x","expectation":"y"}\nHope that helps'
         : "msg";
-    const config = buildDataDesignerConfig({ family: "mcp", count: 1 });
+    const config = buildDataDesignerConfig(
+      { family: "mcp", count: 1 },
+      mcpSeeds,
+    );
     const records = await generateWithOpenAI(config, 1, { chat });
     expect((records[0] as Record<string, unknown>).grading).toEqual({
       successCriteria: "x",

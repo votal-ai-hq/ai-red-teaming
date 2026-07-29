@@ -78,7 +78,9 @@ export async function generateNemoDatasetInRun(
 
   const records = await client.generate(ddConfig, preset.count);
   const rows = recordsToRows(records, preset.family);
-  const { valid, errors, duplicatesDropped } = validateRows(rows);
+  const { valid, errors, duplicatesDropped } = validateRows(rows, {
+    family: preset.family,
+  });
   if (errors.length > 0) {
     log(`nemo dropped ${errors.length} invalid row(s); kept ${valid.length}`);
   }

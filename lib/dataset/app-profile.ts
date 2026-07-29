@@ -20,6 +20,8 @@ import type { DatasetSeeds } from "./types.js";
 export interface ProfileTool {
   name: string;
   description?: string;
+  /** MCP input schema used to generate valid direct-call arguments. */
+  inputSchema?: Record<string, unknown>;
   /** Mutating / outbound / cross-tenant / admin tools — the high-value targets. */
   sensitive?: boolean;
 }
@@ -161,6 +163,13 @@ export function validateProfile(raw: unknown): AppProfile {
       const tool: ProfileTool = { name: tname };
       const desc = str(tt.description).slice(0, MAX_TOOL_DESC);
       if (desc) tool.description = desc;
+      if (
+        tt.inputSchema &&
+        typeof tt.inputSchema === "object" &&
+        !Array.isArray(tt.inputSchema)
+      ) {
+        tool.inputSchema = tt.inputSchema as Record<string, unknown>;
+      }
       if (tt.sensitive === true) tool.sensitive = true;
       tools.push(tool);
       if (tools.length >= MAX_TOOLS) break;
@@ -204,6 +213,7 @@ export function mergeProfiles(
     mergedToolsByName.set(t.name.toLowerCase(), {
       name: t.name,
       description: t.description ?? existing?.description,
+      inputSchema: t.inputSchema ?? existing?.inputSchema,
       sensitive: t.sensitive || existing?.sensitive || undefined,
     });
   }
@@ -233,7 +243,10 @@ export function mergeProfiles(
 function toolSurface(t: ProfileTool): string {
   const tag = t.sensitive ? " [sensitive]" : "";
   const desc = t.description ? ` — ${t.description}` : "";
-  return `tool "${t.name}"${tag}${desc}`;
+  const schema = t.inputSchema
+    ? ` schema=${JSON.stringify(t.inputSchema).slice(0, 1200)}`
+    : "";
+  return `tool "${t.name}"${tag}${desc}${schema}`;
 }
 
 /**

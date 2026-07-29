@@ -1279,7 +1279,11 @@ const server = createServer(
             serverInfo: d.serverInfo ?? null,
             protocolVersion: d.protocolVersion ?? null,
             capabilities: d.capabilities,
-            tools: d.tools.map((t) => ({ name: t.name, description: t.description ?? "" })),
+            tools: d.tools.map((t) => ({
+              name: t.name,
+              description: t.description ?? "",
+              inputSchema: t.inputSchema,
+            })),
             prompts: d.prompts.map((p) => ({ name: p.name, description: p.description ?? "" })),
             resources: d.resources.map((r) => ({ name: r.name ?? r.uri, uri: r.uri })),
           }),
@@ -1764,6 +1768,7 @@ const server = createServer(
         const body = JSON.parse(await readBody(req)) as {
           out?: string;
           kind?: string;
+          family?: string;
           rows?: unknown[];
           /** Top-up: merge into the existing `out` file instead of replacing. */
           append?: boolean;
@@ -1782,6 +1787,12 @@ const server = createServer(
         }
         const rows = Array.isArray(body.rows) ? body.rows : [];
         const kind = body.kind === "quality" ? "quality" : "security";
+        const family =
+          body.family === "mcp" ||
+          (body.family !== "agent" &&
+            /(^|[\\/])(?:nemo-)?mcp([\\/]|$)/i.test(body.out))
+            ? "mcp"
+            : "agent";
         // Curated rows already passed generation validation; allow whatever
         // (possibly custom) task labels they carry so a save/top-up preserves
         // them. `metric` still validates strictly.
@@ -1798,7 +1809,7 @@ const server = createServer(
         const gen =
           kind === "quality"
             ? validateQualityRows(rows, { allowedTasks })
-            : validateRows(rows);
+            : validateRows(rows, { family });
         if (gen.errors.length > 0 || gen.valid.length === 0) {
           res.writeHead(422, {
             "Content-Type": "application/json",
@@ -1823,7 +1834,10 @@ const server = createServer(
           body.append === true && (await datasetExistsStore(tenant, body.out));
         if (append) {
           const existingRows = (await readDatasetRowsStore(tenant, body.out)) ?? [];
-          const merged = mergeDatasets(kind, existingRows, gen.valid, { allowedTasks });
+          const merged = mergeDatasets(kind, existingRows, gen.valid, {
+            allowedTasks,
+            family,
+          });
           added = merged.added;
           duplicatesDropped += gen.valid.length - merged.added;
           valid = merged.valid;
@@ -2660,7 +2674,9 @@ const server = createServer(
         const gen =
           kind === "quality"
             ? validateQualityRows(recordsToQualityRows(records), { allowedTasks })
-            : validateRows(recordsToRows(records, preset.family));
+            : validateRows(recordsToRows(records, preset.family), {
+                family: preset.family,
+              });
         const errors = gen.errors;
         let valid: unknown[] = gen.valid;
         let histogram = gen.histogram;
@@ -2694,7 +2710,10 @@ const server = createServer(
         let addedCount = valid.length;
         if (append) {
           const existingRows = (await readDatasetRowsStore(tenant, body.out)) ?? [];
-          const merged = mergeDatasets(kind, existingRows, valid, { allowedTasks });
+          const merged = mergeDatasets(kind, existingRows, valid, {
+            allowedTasks,
+            family: preset.family,
+          });
           addedCount = merged.added;
           duplicatesDropped += valid.length - merged.added;
           valid = merged.valid;

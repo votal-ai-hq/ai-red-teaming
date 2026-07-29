@@ -19,6 +19,12 @@ export interface DatasetRow {
   successCriteria: string;
   description?: string;
   note?: string;
+  /** MCP-native execution fields. Required for generated MCP security rows. */
+  _mcpOperation?: "tools/call" | "resources/read" | "prompts/get";
+  _mcpTool?: string;
+  _mcpResourceUri?: string;
+  _mcpPrompt?: string;
+  _mcpArguments?: Record<string, unknown>;
 }
 
 /**

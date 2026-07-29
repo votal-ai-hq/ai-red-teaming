@@ -864,7 +864,9 @@ export function DatasetsPage() {
       ...(!isDirect ? { provider: providerId } : {}),
       ...(model.trim() ? { generationModel: model.trim() } : {}),
       ...(profileId ? { profileId } : {}),
-      ...(turnMode === "multi" ? { turnMode: "multi" as const, maxTurns } : {}),
+      ...(turnMode === "multi" && !(kind === "security" && family === "mcp")
+        ? { turnMode: "multi" as const, maxTurns }
+        : {}),
       ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
       ...(examplesList.length ? { examples: examplesList } : {}),
       ...(append && !isPreview ? { append: true } : {}),
@@ -930,6 +932,7 @@ export function DatasetsPage() {
       const res = await saveDatasetRows({
         out: curate.out,
         kind,
+        family,
         rows: kept,
         append: curate.append,
       });
@@ -1012,25 +1015,40 @@ export function DatasetsPage() {
             <Field label="Conversation">
               <div className="flex items-center gap-2">
                 <Segmented
-                  options={[
-                    {
-                      value: "single",
-                      label: "Single-turn",
-                      title: "One message per case",
-                    },
-                    {
-                      value: "multi",
-                      label: "Multi-turn",
-                      title:
-                        kind === "security"
-                          ? "A [Turn N] escalation transcript"
-                          : "A [Turn N] multi-step task conversation",
-                    },
-                  ]}
-                  value={turnMode}
+                  options={
+                    kind === "security" && family === "mcp"
+                      ? [
+                          {
+                            value: "single",
+                            label: "Single operation",
+                            title: "One direct MCP protocol operation per case",
+                          },
+                        ]
+                      : [
+                          {
+                            value: "single",
+                            label: "Single-turn",
+                            title: "One message per case",
+                          },
+                          {
+                            value: "multi",
+                            label: "Multi-turn",
+                            title:
+                              kind === "security"
+                                ? "A [Turn N] escalation transcript"
+                                : "A [Turn N] multi-step task conversation",
+                          },
+                        ]
+                  }
+                  value={
+                    kind === "security" && family === "mcp"
+                      ? "single"
+                      : turnMode
+                  }
                   onChange={setTurnMode}
                 />
-                {turnMode === "multi" && (
+                {turnMode === "multi" &&
+                  !(kind === "security" && family === "mcp") && (
                   <Input
                     type="number"
                     className="w-16 h-9"

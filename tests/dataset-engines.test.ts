@@ -85,16 +85,21 @@ describe("generateWithOpenAI works with an Anthropic-shaped chat", () => {
     let n = 0;
     const fetchImpl = (async (_url: string, init: RequestInit) => {
       const body = JSON.parse(init.body as string) as { messages: { content: string }[] };
-      const isJson = /JSON object/i.test(body.messages[0].content);
-      const text = isJson
+      const isGrading = /successCriteria/.test(body.messages[0].content);
+      const text = isGrading
         ? '{"successCriteria":"the tool was misused","expectation":"refuse"}'
-        : `a concrete adversarial message number ${n++}`;
+        : `{"bookingId":"BK-${n++}"}`;
       return new Response(JSON.stringify({ content: [{ type: "text", text }] }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const config = buildDataDesignerConfig({ family: "mcp", generationModel: "claude-opus-4-8", count: 3 });
+    const config = buildDataDesignerConfig(
+      { family: "mcp", generationModel: "claude-opus-4-8", count: 3 },
+      { surfaces: ['tool "get_booking"'] },
+    );
     const records = await generateWithOpenAI(config, 3, { chat: anthropicChat("k", { fetchImpl }) });
-    const { valid, errors } = validateRows(recordsToRows(records, "mcp"));
+    const { valid, errors } = validateRows(recordsToRows(records, "mcp"), {
+      family: "mcp",
+    });
     expect(errors).toEqual([]);
     expect(valid).toHaveLength(3);
   });
