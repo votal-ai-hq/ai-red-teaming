@@ -20,6 +20,16 @@ function clean(s: string): string {
   return s.trim().replace(/\s+/g, " ");
 }
 
+function schemaText(value: unknown): string {
+  if (typeof value === "string") return clean(value);
+  if (!value || typeof value !== "object") return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
 function dedupeCap(values: string[], cap: number): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -47,7 +57,9 @@ export function seedsFromAnalysis(analysis: CodebaseAnalysis): DatasetSeeds {
   for (const t of analysis.tools ?? []) {
     if (!t?.name) continue;
     const desc = t.description ? ` — ${clean(t.description).slice(0, 60)}` : "";
-    surfaceCandidates.push(`tool "${clean(t.name)}"${desc}`);
+    const parameters = schemaText(t.parameters);
+    const schema = parameters ? ` schema=${parameters.slice(0, 1200)}` : "";
+    surfaceCandidates.push(`tool "${clean(t.name)}"${desc}${schema}`);
   }
 
   for (const chain of analysis.toolChains ?? []) {

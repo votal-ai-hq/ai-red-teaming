@@ -34,7 +34,13 @@ function toolIsSensitive(name: string, description = ""): boolean {
   return SENSITIVE_RE.test(words);
 }
 
-function cleanTools(raw: Array<{ name: string; description?: string }>): ProfileTool[] {
+function cleanTools(
+  raw: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: unknown;
+  }>,
+): ProfileTool[] {
   const out: ProfileTool[] = [];
   const seen = new Set<string>();
   for (const t of raw) {
@@ -44,6 +50,13 @@ function cleanTools(raw: Array<{ name: string; description?: string }>): Profile
     const description = (t.description ?? "").trim().replace(/\s+/g, " ");
     const tool: ProfileTool = { name };
     if (description) tool.description = description.slice(0, 200);
+    if (
+      t.inputSchema &&
+      typeof t.inputSchema === "object" &&
+      !Array.isArray(t.inputSchema)
+    ) {
+      tool.inputSchema = t.inputSchema as Record<string, unknown>;
+    }
     if (toolIsSensitive(name, description)) tool.sensitive = true;
     out.push(tool);
   }
@@ -103,6 +116,7 @@ export function parseMcpManifest(json: unknown): Partial<AppProfile> {
       .map((t) => ({
         name: String(t.name ?? ""),
         description: String(t.description ?? ""),
+        inputSchema: t.inputSchema,
       })),
   );
   const profile: Partial<AppProfile> = { source: "mcp-manifest" };

@@ -93,6 +93,7 @@ export function getDatasetTaxonomy(kind: string, family: string) {
 export interface ProfileTool {
   name: string;
   description?: string;
+  inputSchema?: Record<string, unknown>;
   sensitive?: boolean;
 }
 
@@ -228,6 +229,7 @@ export function getDatasetRows(path: string, limit = 200) {
 export function saveDatasetRows(body: {
   out: string;
   kind: "security" | "quality";
+  family: "mcp" | "agent";
   rows: DatasetRow[];
   /** Top-up: merge into the existing file instead of replacing. */
   append?: boolean;

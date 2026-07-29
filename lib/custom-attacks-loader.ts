@@ -124,7 +124,11 @@ function rowToAttack(
     ? (authRaw as Attack["authMethod"])
     : defaultAuth;
 
-  const segments = splitPromptByTurnMarkers(prompt);
+  const mcpOperation = String(row._mcpOperation ?? "").trim();
+  const isMcpNative = Boolean(mcpOperation);
+  const segments = isMcpNative
+    ? [prompt]
+    : splitPromptByTurnMarkers(prompt);
   const firstTurn = segments[0]?.trim() ?? "";
   if (!firstTurn) {
     throw new Error(
@@ -132,6 +136,17 @@ function rowToAttack(
     );
   }
   const basePayload = buildPayload(config, firstTurn, role);
+  if (isMcpNative) {
+    basePayload._mcpOperation = mcpOperation;
+    for (const field of [
+      "_mcpTool",
+      "_mcpResourceUri",
+      "_mcpPrompt",
+      "_mcpArguments",
+    ] as const) {
+      if (row[field] !== undefined) basePayload[field] = row[field];
+    }
+  }
 
   let steps: AttackStep[] | undefined;
   if (segments.length > 1) {

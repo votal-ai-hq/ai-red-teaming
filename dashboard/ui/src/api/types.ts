@@ -329,7 +329,11 @@ export interface McpDiscoverResult {
   serverInfo?: { name: string; version?: string } | null;
   protocolVersion?: string | null;
   capabilities?: string[];
-  tools?: { name: string; description: string }[];
+  tools?: {
+    name: string;
+    description: string;
+    inputSchema?: Record<string, unknown>;
+  }[];
   prompts?: { name: string; description: string }[];
   resources?: { name: string; uri: string }[];
 }

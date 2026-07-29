@@ -99,7 +99,16 @@ describe("profileToSeeds / profileToContext", () => {
     businessRules: ["Never transfer without 2FA"],
     tools: [
       { name: "getBalance", description: "read balance" },
-      { name: "wireTransfer", description: "send money", sensitive: true },
+      {
+        name: "wireTransfer",
+        description: "send money",
+        inputSchema: {
+          type: "object",
+          properties: { amount: { type: "number" } },
+          required: ["amount"],
+        },
+        sensitive: true,
+      },
     ],
     roles: ["customer", "teller"],
     dataClasses: ["account numbers", "PII"],
@@ -109,6 +118,9 @@ describe("profileToSeeds / profileToContext", () => {
     const seeds = profileToSeeds(profile);
     expect(seeds.roles).toEqual(["customer", "teller"]);
     expect(seeds.surfaces?.[0]).toMatch(/wireTransfer.*\[sensitive\]/);
+    expect(seeds.surfaces?.[0]).toContain(
+      'schema={"type":"object","properties":{"amount":{"type":"number"}}',
+    );
     expect(seeds.context).toContain("retail banking assistant");
   });
 
@@ -141,7 +153,10 @@ describe("config builders inject profile context", () => {
   it("security prompt column carries the app context", () => {
     const cfg = buildDataDesignerConfig(
       { family: "mcp", count: 5 },
-      { context: "Application: a payroll app" },
+      {
+        context: "Application: a payroll app",
+        surfaces: ['tool "read_payroll"'],
+      },
     );
     const promptCol = cfg.columns.find((c) => c.name === "prompt");
     expect(promptCol && "prompt" in promptCol && promptCol.prompt).toContain(
@@ -154,7 +169,10 @@ describe("config builders inject profile context", () => {
   });
 
   it("no context leaves the base template unchanged (no preamble)", () => {
-    const cfg = buildDataDesignerConfig({ family: "mcp", count: 5 });
+    const cfg = buildDataDesignerConfig(
+      { family: "mcp", count: 5 },
+      { surfaces: ['tool "read_payroll"'] },
+    );
     const promptCol = cfg.columns.find((c) => c.name === "prompt");
     expect(
       promptCol && "prompt" in promptCol && promptCol.prompt,
@@ -224,13 +242,26 @@ describe("importers", () => {
       tools: [
         { name: "search_docs", description: "read only" },
         { name: "delete_file", description: "removes a file" },
-        { name: "send_email", description: "sends mail" },
+        {
+          name: "send_email",
+          description: "sends mail",
+          inputSchema: {
+            type: "object",
+            properties: { to: { type: "string" } },
+            required: ["to"],
+          },
+        },
       ],
     });
     expect(p.tools).toHaveLength(3);
     expect(p.tools?.find((t) => t.name === "search_docs")?.sensitive).toBeUndefined();
     expect(p.tools?.find((t) => t.name === "delete_file")?.sensitive).toBe(true);
     expect(p.tools?.find((t) => t.name === "send_email")?.sensitive).toBe(true);
+    expect(p.tools?.find((t) => t.name === "send_email")?.inputSchema).toEqual({
+      type: "object",
+      properties: { to: { type: "string" } },
+      required: ["to"],
+    });
   });
 
   it("OpenAPI maps operations (mutating = sensitive) and roles from schemes", () => {

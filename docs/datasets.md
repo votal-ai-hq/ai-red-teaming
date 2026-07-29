@@ -58,12 +58,19 @@ Presets live in `configs/datasets/` and are the tuning knobs (family, category
 pool, counts, model, balance floor).
 
 ```bash
-# Inspect a few records before committing to a full run
-npm run gen:dataset -- --preset configs/datasets/nemo-mcp.preset.json --preview
+# First capture the MCP target's real tools, schemas, prompts, and resources.
+npm run analyze:dump -- config.mytarget.json --out analysis.json
+
+# Inspect a few executable records before committing to a full run.
+npm run gen:dataset -- \
+  --preset configs/datasets/nemo-mcp.preset.json \
+  --from-analysis analysis.json \
+  --preview
 
 # Full generate
 npm run gen:dataset -- \
   --preset configs/datasets/nemo-mcp.preset.json \
+  --from-analysis analysis.json \
   --out data/datasets/nemo-mcp/v1.json \
   --count 400
 ```
@@ -71,10 +78,33 @@ npm run gen:dataset -- \
 Flags: `--family <mcp|agent>`, `--preset <file>`, `--out <file>`,
 `--count <n>`, `--seed <file>` (optional `{roles,surfaces}`), `--preview`.
 
+MCP security generation requires a target analysis, imported MCP profile, or
+explicit seed containing concrete `tool "name"`, `MCP prompt "name"`, or
+`MCP resource "uri"` surfaces. Generic MCP surfaces cannot produce calls that
+the target exposes, so generation fails before spending model tokens when no
+executable surface is available. Direct MCP datasets are single-operation
+datasets; use the agent family for multi-turn conversation evals.
+
+Each generated MCP row includes the protocol fields consumed by the target
+adapter:
+
+```json
+{
+  "prompt": "{\"bookingId\":\"BK-7001\",\"newAmountINR\":1}",
+  "_mcpOperation": "tools/call",
+  "_mcpTool": "override_price",
+  "_mcpArguments": {
+    "bookingId": "BK-7001",
+    "newAmountINR": 1
+  }
+}
+```
+
 The generator **fails closed**: it refuses to write if any row has a category
-outside the `AttackCategory` union, an empty prompt/successCriteria, or a bad
-severity. It prints a per-category histogram and warns on categories below the
-preset's `perCategoryFloor`.
+outside the `AttackCategory` union, an empty prompt/successCriteria, a bad
+severity, or (for MCP) missing operation-specific execution fields. It prints a
+per-category histogram and warns on categories below the preset's
+`perCategoryFloor`.
 
 ## Run the eval
 
@@ -91,9 +121,9 @@ every pack in it). Reports land in `report/` exactly as for any other run.
 
 ## Target-tailored generation (seed from source)
 
-Generic datasets are useful, but the platform's edge is white-box knowledge. You
-can seed generation from a real target's discovered tool graph, roles, and MCP
-surface so the synthetic attacks reference *your* tools and chains.
+Agent datasets can be generic. MCP security datasets must be seeded from a real
+target's discovered tool graph, roles, and MCP surface so every generated row
+references an operation the server actually exposes.
 
 ```bash
 # 1. Analyze the target (needs a config with codebasePath) and dump the analysis

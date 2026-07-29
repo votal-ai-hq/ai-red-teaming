@@ -191,6 +191,7 @@ export function ProfileWizard({ open, onOpenChange, onSaved }: Props) {
       const tools: ProfileTool[] = (result.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
+        inputSchema: t.inputSchema,
       }));
       if (tools.length === 0) {
         setError("Connected, but the server exposed no tools.");

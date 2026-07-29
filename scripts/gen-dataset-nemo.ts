@@ -145,7 +145,9 @@ async function main(): Promise<void> {
   const { valid, errors, histogram, duplicatesDropped } =
     kind === "quality"
       ? validateQualityRows(recordsToQualityRows(records))
-      : validateRows(recordsToRows(records, preset.family));
+      : validateRows(recordsToRows(records, preset.family), {
+          family: preset.family,
+        });
 
   console.log(`\n[gen] produced ${records.length} record(s)`);
   console.log(`[gen] valid ${valid.length}, dropped-duplicate ${duplicatesDropped}, invalid ${errors.length}`);

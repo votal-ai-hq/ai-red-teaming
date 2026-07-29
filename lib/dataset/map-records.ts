@@ -6,6 +6,7 @@
  */
 import type { NemoRecord } from "./nemo-client.js";
 import type { DatasetFamily } from "./category-set.js";
+import { executionFromMcpRecord } from "./mcp-execution.js";
 import { toText } from "./to-text.js";
 
 /**
@@ -41,6 +42,8 @@ export function recordToRow(
     surface ? `surface=${surface}` : "",
   ].filter(Boolean);
 
+  const execution = family === "mcp" ? executionFromMcpRecord(rec) : null;
+
   return {
     category,
     name,
@@ -51,6 +54,7 @@ export function recordToRow(
     description:
       descParts.join(" ") + (expectation ? ` | expected: ${expectation}` : ""),
     note: "generator=nemo-data-designer version=1",
+    ...(execution ?? {}),
   };
 }
 

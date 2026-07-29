@@ -9,6 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { isAttackCategory } from "./category-set.js";
+import type { DatasetFamily } from "./category-set.js";
 import { isQualityTask, isQualityMetric } from "./quality-set.js";
 import { toText } from "./to-text.js";
 import type {
@@ -41,7 +42,10 @@ function isSeverity(s: unknown): s is Severity {
  * - `successCriteria` MUST be non-empty (rows are self-grading).
  * - near-duplicate prompts (normalized) are dropped, not errored.
  */
-export function validateRows(rows: unknown[]): ValidationResult {
+export function validateRows(
+  rows: unknown[],
+  opts?: { family?: DatasetFamily },
+): ValidationResult {
   const valid: DatasetRow[] = [];
   const errors: string[] = [];
   const histogram: Record<string, number> = {};
@@ -79,6 +83,48 @@ export function validateRows(rows: unknown[]): ValidationResult {
       return;
     }
 
+    const operation = String(o._mcpOperation ?? "").trim();
+    if (opts?.family === "mcp") {
+      if (
+        operation !== "tools/call" &&
+        operation !== "resources/read" &&
+        operation !== "prompts/get"
+      ) {
+        errors.push(
+          `row ${idx} (${category}): missing or invalid _mcpOperation`,
+        );
+        return;
+      }
+      if (operation === "tools/call" && !String(o._mcpTool ?? "").trim()) {
+        errors.push(`row ${idx} (${category}): tools/call requires _mcpTool`);
+        return;
+      }
+      if (
+        (operation === "tools/call" || operation === "prompts/get") &&
+        (!o._mcpArguments ||
+          typeof o._mcpArguments !== "object" ||
+          Array.isArray(o._mcpArguments))
+      ) {
+        errors.push(
+          `row ${idx} (${category}): ${operation} requires object _mcpArguments`,
+        );
+        return;
+      }
+      if (
+        operation === "resources/read" &&
+        !String(o._mcpResourceUri ?? "").trim()
+      ) {
+        errors.push(
+          `row ${idx} (${category}): resources/read requires _mcpResourceUri`,
+        );
+        return;
+      }
+      if (operation === "prompts/get" && !String(o._mcpPrompt ?? "").trim()) {
+        errors.push(`row ${idx} (${category}): prompts/get requires _mcpPrompt`);
+        return;
+      }
+    }
+
     const h = hashPrompt(prompt);
     if (seen.has(h)) {
       duplicatesDropped++;
@@ -96,6 +142,25 @@ export function validateRows(rows: unknown[]): ValidationResult {
     if (o.role) row.role = String(o.role).trim();
     if (o.description) row.description = String(o.description).trim();
     if (o.note) row.note = String(o.note).trim();
+    if (
+      operation === "tools/call" ||
+      operation === "resources/read" ||
+      operation === "prompts/get"
+    ) {
+      row._mcpOperation = operation;
+    }
+    if (o._mcpTool) row._mcpTool = String(o._mcpTool).trim();
+    if (o._mcpResourceUri) {
+      row._mcpResourceUri = String(o._mcpResourceUri).trim();
+    }
+    if (o._mcpPrompt) row._mcpPrompt = String(o._mcpPrompt).trim();
+    if (
+      o._mcpArguments &&
+      typeof o._mcpArguments === "object" &&
+      !Array.isArray(o._mcpArguments)
+    ) {
+      row._mcpArguments = o._mcpArguments as Record<string, unknown>;
+    }
 
     valid.push(row);
     histogram[category] = (histogram[category] ?? 0) + 1;
@@ -202,7 +267,7 @@ export function mergeDatasets(
   kind: "security" | "quality",
   existing: unknown[],
   incoming: unknown[],
-  opts?: { allowedTasks?: Iterable<string> },
+  opts?: { allowedTasks?: Iterable<string>; family?: DatasetFamily },
 ): (ValidationResult | QualityValidationResult) & { added: number } {
   const existingArr = Array.isArray(existing) ? existing : [];
   const existingCount = existingArr.length;
@@ -220,7 +285,7 @@ export function mergeDatasets(
     }
     res = validateQualityRows(combined, { allowedTasks: allowed });
   } else {
-    res = validateRows(combined);
+    res = validateRows(combined, { family: opts?.family });
   }
   return { ...res, added: res.valid.length - existingCount };
 }
