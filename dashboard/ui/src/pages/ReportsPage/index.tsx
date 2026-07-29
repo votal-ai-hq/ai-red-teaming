@@ -38,6 +38,9 @@ import {
   Loader2,
   Cpu,
   Coins,
+  Hash,
+  CheckCircle2,
+  type LucideIcon,
 } from "lucide-react";
 
 /* ─── helpers ─── */
@@ -874,19 +877,21 @@ function fmtDur(ms: number): string {
 }
 
 function UsagePanel({ usage }: { usage: UsageSummary }) {
-  const stats: { label: string; value: string; sub?: string; accent?: string }[] = [
+  const stats: { label: string; value: string; sub?: string; accent?: string; icon: LucideIcon }[] = [
     {
       label: "est. cost",
       value: usage.costUsd == null ? "n/a" : `${fmtUsd(usage.costUsd)}${usage.costComplete ? "" : "+"}`,
       accent: "text-emerald-600 dark:text-emerald-400",
+      icon: Coins,
     },
     {
       label: "tokens",
       value: fmtTokens(usage.totalTokens),
       sub: `${fmtTokens(usage.inputTokens)} in / ${fmtTokens(usage.outputTokens)} out`,
+      icon: Hash,
     },
-    { label: "LLM time", value: fmtDur(usage.llmLatencyMsTotal) },
-    { label: "calls", value: String(usage.totalCalls) },
+    { label: "LLM time", value: fmtDur(usage.llmLatencyMsTotal), icon: Clock },
+    { label: "calls", value: String(usage.totalCalls), icon: Zap },
   ];
   // Always show the failure metric so it's clear failures are tracked; neutral
   // at zero (a red "0" reads as alarming), red with a breakdown when > 0.
@@ -898,6 +903,7 @@ function UsagePanel({ usage }: { usage: UsageSummary }) {
         ? `${usage.errorsByKind.rate_limit} rate-limit · ${usage.errorsByKind.timeout} timeout · ${usage.errorsByKind.other} other`
         : "all calls succeeded",
     accent: usage.failedCalls > 0 ? "text-red-600 dark:text-red-400" : "text-foreground",
+    icon: usage.failedCalls > 0 ? AlertTriangle : CheckCircle2,
   });
 
   // Hide the by-phase table until calls carry meaningful phase labels.
@@ -917,16 +923,25 @@ function UsagePanel({ usage }: { usage: UsageSummary }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-x-8 gap-y-3">
-          {stats.map((s) => (
-            <div key={s.label} className="min-w-0">
-              <div className={`text-2xl font-bold tracking-tight tabular-nums ${s.accent ?? "text-foreground"}`}>
-                {s.value}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {stats.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div
+                key={s.label}
+                className="rounded-xl border border-border bg-muted/20 px-4 py-3"
+              >
+                <div className="flex items-center gap-1.5 text-muted-foreground mb-1.5">
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="text-[11px] font-medium uppercase tracking-wide">{s.label}</span>
+                </div>
+                <div className={`text-2xl font-bold tracking-tight tabular-nums ${s.accent ?? "text-foreground"}`}>
+                  {s.value}
+                </div>
+                {s.sub && <div className="text-[11px] text-muted-foreground/70 mt-1">{s.sub}</div>}
               </div>
-              <div className="text-xs text-muted-foreground">{s.label}</div>
-              {s.sub && <div className="text-[11px] text-muted-foreground/80 mt-0.5">{s.sub}</div>}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {(!usage.costComplete || !usage.tokensComplete) && (
