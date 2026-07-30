@@ -13,6 +13,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  evaluationExportBaseName,
+  evaluationReportCsv,
+  evaluationReportJson,
+} from "@/lib/evaluation-export";
+import {
   Swords,
   Gauge,
   Target,
@@ -35,6 +40,7 @@ import {
   Check,
   Clock,
   AlertTriangle,
+  Download,
 } from "lucide-react";
 
 type Status = "live" | "cli" | "planned";
@@ -219,6 +225,26 @@ function scoreDelta(reports: QualityReportMeta[], idx: number): number | null {
 
 function shortName(path: string): string {
   return path.split("/").slice(-2).join("/").replace(/\.json$/i, "") || path;
+}
+
+function downloadEvaluation(
+  report: QualityEvalReport,
+  filename: string,
+  format: "json" | "csv",
+) {
+  const content =
+    format === "csv" ? evaluationReportCsv(report) : evaluationReportJson(report);
+  const blob = new Blob([format === "csv" ? `\uFEFF${content}` : content], {
+    type: format === "csv" ? "text/csv;charset=utf-8" : "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${evaluationExportBaseName(filename)}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 // A failing row is one of three very different problems. Separating them is
@@ -1052,6 +1078,30 @@ export function EvaluationRunPage() {
                     <span className="text-muted-foreground">total</span>
                   </span>
                 </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    downloadEvaluation(report, filename ?? "quality-evaluation.json", "csv")
+                  }
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export CSV
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    downloadEvaluation(report, filename ?? "quality-evaluation.json", "json")
+                  }
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export JSON
+                </Button>
               </div>
             </div>
           </div>
