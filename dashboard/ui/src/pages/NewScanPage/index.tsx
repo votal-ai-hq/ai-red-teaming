@@ -238,7 +238,7 @@ function Segmented<T extends string>({
             onClick={() => onChange(o.value)}
             className={`rounded-md font-medium transition-colors ${pad} ${
               active
-                ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                ? "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -1109,7 +1109,10 @@ export default function NewScanPage() {
                       <FieldRow label="Headers" hint="Auth headers sent to the MCP server (e.g. x-api-key)">
                         <div className="space-y-2">
                           {mcpHeaders.map((h, i) => (
-                            <div key={i} className="flex gap-2">
+                            <div
+                              key={i}
+                              className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem]"
+                            >
                               <input
                                 type="text"
                                 value={h.key}
@@ -1119,7 +1122,8 @@ export default function NewScanPage() {
                                   setMcpHeaders(copy);
                                 }}
                                 placeholder="Header name (e.g. x-api-key)"
-                                className={`${inputCls} w-1/3`}
+                                aria-label={`Header ${i + 1} name`}
+                                className={`${inputCls} min-w-0`}
                               />
                               <input
                                 type="text"
@@ -1130,13 +1134,15 @@ export default function NewScanPage() {
                                   setMcpHeaders(copy);
                                 }}
                                 placeholder="Value"
-                                className={`${inputCls} flex-1`}
+                                aria-label={`Header ${i + 1} value`}
+                                className={`${inputCls} min-w-0`}
                               />
                               {mcpHeaders.length > 1 && (
                                 <button
                                   type="button"
                                   onClick={() => setMcpHeaders(mcpHeaders.filter((_, j) => j !== i))}
-                                  className="text-muted-foreground hover:text-red-500 px-1"
+                                  aria-label={`Remove header ${i + 1}`}
+                                  className="h-10 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:w-8"
                                 >
                                   <X className="w-4 h-4" />
                                 </button>
