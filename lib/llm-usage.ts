@@ -29,6 +29,10 @@ export interface UsageRecord {
   errorKind?: UsageErrorKind;
   /** Whether the provider actually returned token usage (some endpoints don't). */
   tokensReported: boolean;
+  /** How many times this call was retried before the terminal outcome. */
+  retryCount: number;
+  /** Tokens consumed by intermediate retry attempts that failed before the terminal outcome. */
+  retryTokens: number;
 }
 
 interface Bucket {
@@ -82,6 +86,10 @@ export interface UsageSummary {
   /** Total wall-clock time spent inside LLM calls (ms). */
   llmLatencyMsTotal: number;
   errorsByKind: Record<UsageErrorKind, number>;
+  /** Total retries across all LLM calls (0 means every call succeeded first try). */
+  totalRetries: number;
+  /** Tokens consumed by intermediate retry attempts that failed before the terminal outcome. */
+  retryTokens: number;
   byPhase: UsageByPhase[];
   byModel: UsageByModel[];
 }
@@ -115,12 +123,16 @@ export class UsageCollector {
     let outputTokens = 0;
     let llmLatencyMsTotal = 0;
     let tokensComplete = true;
+    let totalRetries = 0;
+    let retryTokens = 0;
 
     for (const r of this.records) {
       totalCalls += 1;
-      inputTokens += r.inputTokens;
+      inputTokens += r.inputTokens + r.retryTokens;
       outputTokens += r.outputTokens;
       llmLatencyMsTotal += r.latencyMs;
+      totalRetries += r.retryCount;
+      retryTokens += r.retryTokens;
       if (!r.ok) {
         failedCalls += 1;
         errorsByKind[r.errorKind ?? "other"] += 1;
@@ -179,6 +191,8 @@ export class UsageCollector {
       unpricedModels: [...unpriced].sort(),
       llmLatencyMsTotal,
       errorsByKind,
+      totalRetries,
+      retryTokens,
       byPhase: [...byPhase.entries()]
         .map(([phase, b]) => ({
           phase,
@@ -269,6 +283,8 @@ export function recordLlmUsage(input: {
   ok: boolean;
   errorKind?: UsageErrorKind;
   tokensReported: boolean;
+  retryCount?: number;
+  retryTokens?: number;
 }): void {
   const collector = usageContext.getStore();
   if (!collector) return;
@@ -282,6 +298,8 @@ export function recordLlmUsage(input: {
     ok: input.ok,
     errorKind: input.errorKind,
     tokensReported: input.tokensReported,
+    retryCount: input.retryCount ?? 0,
+    retryTokens: input.retryTokens ?? 0,
   });
 }
 
@@ -323,7 +341,10 @@ export function formatUsageSummary(u: UsageSummary): string[] {
   const failStr = u.failedCalls > 0
     ? ` · ${u.failedCalls} failed (${u.errorsByKind.rate_limit} rate-limit, ${u.errorsByKind.timeout} timeout, ${u.errorsByKind.other} other)`
     : "";
-  lines.push(`  ${u.totalCalls} calls${failStr}`);
+  const retryStr = u.totalRetries > 0
+    ? ` · ${u.totalRetries} retries${u.retryTokens > 0 ? ` (${formatTokens(u.retryTokens)} tokens wasted)` : ""}`
+    : "";
+  lines.push(`  ${u.totalCalls} calls${failStr}${retryStr}`);
   if (!u.tokensComplete) {
     lines.push("  (some calls did not report token usage — totals are a lower bound)");
   }

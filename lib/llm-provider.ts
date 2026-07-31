@@ -103,29 +103,6 @@ async function createOpenAICompatibleChatCompletion(
   // ── usage instrumentation ──
   const startedAt = Date.now();
   const providerName = requestConfig.providerName ?? "openai";
-  const recordOk = (
-    usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined,
-  ) =>
-    recordLlmUsage({
-      provider: providerName,
-      model: options.model,
-      phase: options.phase,
-      inputTokens: usage?.prompt_tokens ?? 0,
-      outputTokens: usage?.completion_tokens ?? 0,
-      latencyMs: Date.now() - startedAt,
-      ok: true,
-      tokensReported: !!usage,
-    });
-  const recordFail = (error: unknown) =>
-    recordLlmUsage({
-      provider: providerName,
-      model: options.model,
-      phase: options.phase,
-      latencyMs: Date.now() - startedAt,
-      ok: false,
-      errorKind: classifyLlmError(error),
-      tokensReported: false,
-    });
 
   try {
     const response = await client.chat.completions.create(
@@ -136,7 +113,16 @@ async function createOpenAICompatibleChatCompletion(
         initialOmitTemperature,
       ),
     );
-    recordOk(response.usage);
+    recordLlmUsage({
+      provider: providerName,
+      model: options.model,
+      phase: options.phase,
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+      latencyMs: Date.now() - startedAt,
+      ok: true,
+      tokensReported: !!response.usage,
+    });
     return response.choices[0]?.message?.content?.trim() ?? "";
   } catch (error) {
     const retryAlternateTokenField = shouldRetryWithAlternateTokenField(error);
@@ -144,10 +130,18 @@ async function createOpenAICompatibleChatCompletion(
       !initialOmitTemperature && shouldRetryWithoutTemperature(error);
 
     if (!retryAlternateTokenField && !retryWithoutTemperature) {
-      recordFail(error);
+      recordLlmUsage({
+        provider: providerName,
+        model: options.model,
+        phase: options.phase,
+        latencyMs: Date.now() - startedAt,
+        ok: false,
+        errorKind: classifyLlmError(error),
+        tokensReported: false,
+      });
       const details = formatErrorDetails(error);
       const enriched = new Error(`LLM request failed: ${details}`);
-      (enriched as any).skipConfig = true; // prevent duplicate [config] lines
+      (enriched as any).skipConfig = true;
       throw enriched;
     }
 
@@ -166,10 +160,29 @@ async function createOpenAICompatibleChatCompletion(
           initialOmitTemperature || retryWithoutTemperature,
         ),
       );
-      recordOk(response.usage);
+      recordLlmUsage({
+        provider: providerName,
+        model: options.model,
+        phase: options.phase,
+        inputTokens: response.usage?.prompt_tokens ?? 0,
+        outputTokens: response.usage?.completion_tokens ?? 0,
+        latencyMs: Date.now() - startedAt,
+        ok: true,
+        tokensReported: !!response.usage,
+        retryCount: 1,
+      });
       return response.choices[0]?.message?.content?.trim() ?? "";
     } catch (retryError) {
-      recordFail(retryError);
+      recordLlmUsage({
+        provider: providerName,
+        model: options.model,
+        phase: options.phase,
+        latencyMs: Date.now() - startedAt,
+        ok: false,
+        errorKind: classifyLlmError(retryError),
+        tokensReported: false,
+        retryCount: 1,
+      });
       throw retryError;
     }
   }
@@ -211,17 +224,6 @@ class AnthropicProvider implements LlmProvider {
 
   async chat(options: ChatOptions): Promise<string> {
     const startedAt = Date.now();
-    const recordFail = (error: unknown) =>
-      recordLlmUsage({
-        provider: "anthropic",
-        model: options.model,
-        phase: options.phase,
-        latencyMs: Date.now() - startedAt,
-        ok: false,
-        errorKind: classifyLlmError(error),
-        tokensReported: false,
-      });
-    // Separate system message from user/assistant messages
     const systemMsg = options.messages.find((m) => m.role === "system");
     const nonSystemMsgs = options.messages.filter((m) => m.role !== "system");
 
@@ -240,6 +242,8 @@ class AnthropicProvider implements LlmProvider {
 
     const MAX_RETRIES = 4;
     const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
+    let retries = 0;
+    let retryInputTokens = 0;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       let response: Response;
@@ -255,6 +259,7 @@ class AnthropicProvider implements LlmProvider {
         });
       } catch (fetchErr) {
         if (attempt < MAX_RETRIES) {
+          retries += 1;
           const delayMs = RETRY_DELAYS_MS[attempt];
           console.warn(
             `  [Anthropic] Network error – retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES}): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
@@ -262,7 +267,17 @@ class AnthropicProvider implements LlmProvider {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
-        recordFail(fetchErr);
+        recordLlmUsage({
+          provider: "anthropic",
+          model: options.model,
+          phase: options.phase,
+          latencyMs: Date.now() - startedAt,
+          ok: false,
+          errorKind: classifyLlmError(fetchErr),
+          tokensReported: false,
+          retryCount: retries,
+          retryTokens: retryInputTokens,
+        });
         throw new Error(
           `Anthropic API network error after ${MAX_RETRIES} retries: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         );
@@ -274,6 +289,7 @@ class AnthropicProvider implements LlmProvider {
         response.status === 429
       ) {
         if (attempt < MAX_RETRIES) {
+          retries += 1;
           const delayMs = RETRY_DELAYS_MS[attempt];
           console.warn(
             `  [Anthropic] ${response.status} – retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})...`,
@@ -287,7 +303,17 @@ class AnthropicProvider implements LlmProvider {
         const err = await response.text();
         const apiError = new Error(`Anthropic API error ${response.status}: ${err}`);
         (apiError as { status?: number }).status = response.status;
-        recordFail(apiError);
+        recordLlmUsage({
+          provider: "anthropic",
+          model: options.model,
+          phase: options.phase,
+          latencyMs: Date.now() - startedAt,
+          ok: false,
+          errorKind: classifyLlmError(apiError),
+          tokensReported: false,
+          retryCount: retries,
+          retryTokens: retryInputTokens,
+        });
         throw apiError;
       }
 
@@ -305,15 +331,26 @@ class AnthropicProvider implements LlmProvider {
         latencyMs: Date.now() - startedAt,
         ok: true,
         tokensReported: !!data.usage,
+        retryCount: retries,
+        retryTokens: retryInputTokens,
       });
       return textBlock?.text?.trim() ?? "";
     }
 
-    const exhausted = new Error(
+    recordLlmUsage({
+      provider: "anthropic",
+      model: options.model,
+      phase: options.phase,
+      latencyMs: Date.now() - startedAt,
+      ok: false,
+      errorKind: "other",
+      tokensReported: false,
+      retryCount: retries,
+      retryTokens: retryInputTokens,
+    });
+    throw new Error(
       "Anthropic API error: max retries exceeded (529 Overloaded)",
     );
-    recordFail(exhausted);
-    throw exhausted;
   }
 }
 

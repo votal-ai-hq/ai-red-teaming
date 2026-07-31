@@ -151,6 +151,8 @@ export interface UsageSummary {
   unpricedModels: string[];
   llmLatencyMsTotal: number;
   errorsByKind: { rate_limit: number; timeout: number; other: number };
+  totalRetries?: number;
+  retryTokens?: number;
   byPhase: UsageByPhase[];
   byModel: UsageByModel[];
 }

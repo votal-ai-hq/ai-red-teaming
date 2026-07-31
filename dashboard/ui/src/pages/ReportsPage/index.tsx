@@ -40,6 +40,7 @@ import {
   Coins,
   Hash,
   CheckCircle2,
+  RefreshCw,
   type LucideIcon,
 } from "lucide-react";
 
@@ -905,6 +906,18 @@ function UsagePanel({ usage }: { usage: UsageSummary }) {
     accent: usage.failedCalls > 0 ? "text-red-600 dark:text-red-400" : "text-foreground",
     icon: usage.failedCalls > 0 ? AlertTriangle : CheckCircle2,
   });
+  const retries = usage.totalRetries ?? 0;
+  if (retries > 0) {
+    stats.push({
+      label: "retries",
+      value: String(retries),
+      sub: (usage.retryTokens ?? 0) > 0
+        ? `${fmtTokens(usage.retryTokens!)} tokens on failed attempts`
+        : "no wasted tokens reported",
+      accent: "text-amber-600 dark:text-amber-400",
+      icon: RefreshCw,
+    });
+  }
 
   // Hide the by-phase table until calls carry meaningful phase labels.
   const showPhases =
