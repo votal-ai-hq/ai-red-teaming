@@ -168,9 +168,9 @@ function RiskResultRow({ result }: { result: RiskAnalysisResult }) {
         ) : (
           <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground truncate">
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-foreground truncate min-w-0">
               {result.attack}
             </span>
             {result.category && (
@@ -180,7 +180,7 @@ function RiskResultRow({ result }: { result: RiskAnalysisResult }) {
             )}
           </div>
           {!expanded && result.businessImpact && (
-            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5 break-words">
               {result.businessImpact}
             </p>
           )}
@@ -191,7 +191,7 @@ function RiskResultRow({ result }: { result: RiskAnalysisResult }) {
           </Badge>
         )}
         {result.financialExposure && (
-          <span className="hidden sm:inline text-sm font-medium text-foreground tabular-nums shrink-0">
+          <span className="hidden sm:inline text-sm font-medium text-foreground tabular-nums shrink-0 max-w-[160px] truncate">
             {result.financialExposure}
           </span>
         )}
