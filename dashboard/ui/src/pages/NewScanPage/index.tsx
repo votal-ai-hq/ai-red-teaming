@@ -203,12 +203,12 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
-      <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="space-y-2.5">
+      <label className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </label>
       {children}
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -250,9 +250,13 @@ function Segmented<T extends string>({
   );
 }
 
-const inputCls =
-  "w-full h-10 px-3 text-sm border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
+const fieldBaseCls =
+  "block w-full px-3 text-sm border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
+const inputCls = `${fieldBaseCls} h-10`;
 const selectCls = `${inputCls} appearance-none cursor-pointer`;
+// Multi-line fields need real vertical padding and their own height from `rows` —
+// the single-line `h-10` would clip them and pin the text to the top edge.
+const textareaCls = `${fieldBaseCls} py-2.5 leading-relaxed resize-y`;
 
 /* ─── main component ─── */
 
@@ -893,7 +897,7 @@ export default function NewScanPage() {
           {/* Quality eval: target source — a new target or a previous scan's. */}
           {mode === "quality" && (
             <div className="mt-3 rounded-lg border border-border p-3 space-y-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Target
               </span>
               <div>
@@ -989,7 +993,7 @@ export default function NewScanPage() {
         <section>
           <SectionHeader step={2} title="Configure target" icon={Target} />
           <Card>
-            <CardContent className="pt-5 space-y-4">
+            <CardContent className="pt-5 space-y-5">
               {/* Scan name (optional) */}
               <FieldRow label="Scan name" hint="Optional — a friendly label for this scan (shown in Scan Activity)">
                 <input
@@ -1250,7 +1254,7 @@ export default function NewScanPage() {
                         onChange={(e) => setMcpAllowlist(e.target.value)}
                         placeholder="read_file, search_docs"
                         rows={2}
-                        className={`${inputCls} resize-y`}
+                        className={textareaCls}
                       />
                     </FieldRow>
                     <FieldRow label="Tool Denylist" hint="Never test these tools (keep destructive ops out of scope).">
@@ -1259,7 +1263,7 @@ export default function NewScanPage() {
                         onChange={(e) => setMcpDenylist(e.target.value)}
                         placeholder="delete_all, wire_transfer"
                         rows={2}
-                        className={`${inputCls} resize-y`}
+                        className={textareaCls}
                       />
                     </FieldRow>
                   </div>
@@ -1323,7 +1327,7 @@ export default function NewScanPage() {
                   onChange={(e) => setApplicationDetails(e.target.value)}
                   placeholder="E.g.: Next.js agentic app with JWT auth, RBAC, guardrails, RAG, and tools for files, DB, email, Slack..."
                   rows={3}
-                  className={`${inputCls} resize-y`}
+                  className={textareaCls}
                 />
               </FieldRow>
             </CardContent>
@@ -1880,7 +1884,7 @@ export default function NewScanPage() {
                 onChange={(e) => setSensitivePatterns(e.target.value)}
                 placeholder={"sk-proj-\nsk_live_\nAKIA\npostgres://"}
                 rows={4}
-                className={`${inputCls} font-mono resize-y`}
+                className={`${textareaCls} font-mono`}
               />
             </FieldRow>
           </CollapsibleSection>
@@ -2095,7 +2099,7 @@ export default function NewScanPage() {
                 onChange={(e) => setJsonConfig(e.target.value)}
                 placeholder='{"target": {"baseUrl": "...", ...}, "auth": {...}, ...}'
                 rows={12}
-                className={`${inputCls} font-mono resize-y`}
+                className={`${textareaCls} font-mono`}
               />
               <p className="text-[11px] text-muted-foreground mt-2">
                 When provided, this JSON is sent directly to the API, overriding all form fields above.

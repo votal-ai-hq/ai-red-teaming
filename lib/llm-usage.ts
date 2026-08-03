@@ -128,11 +128,11 @@ export class UsageCollector {
 
     for (const r of this.records) {
       totalCalls += 1;
-      inputTokens += r.inputTokens + r.retryTokens;
+      inputTokens += r.inputTokens + (r.retryTokens || 0);
       outputTokens += r.outputTokens;
       llmLatencyMsTotal += r.latencyMs;
-      totalRetries += r.retryCount;
-      retryTokens += r.retryTokens;
+      totalRetries += r.retryCount || 0;
+      retryTokens += r.retryTokens || 0;
       if (!r.ok) {
         failedCalls += 1;
         errorsByKind[r.errorKind ?? "other"] += 1;
