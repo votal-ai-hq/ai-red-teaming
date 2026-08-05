@@ -164,7 +164,7 @@ describe("buildDataDesignerConfig", () => {
     const config = buildDataDesignerConfig(
       {
         family: "mcp",
-        categories: ["tool_misuse", "cross_tenant_access"],
+        categories: ["tool_misuse", "debug_access"],
         severities: ["critical", "high"],
       },
       mcpSeeds,
@@ -173,7 +173,7 @@ describe("buildDataDesignerConfig", () => {
     const sev = config.columns.find((c) => c.name === "severity");
     expect(cat && "values" in cat && cat.values).toEqual([
       "tool_misuse",
-      "cross_tenant_access",
+      "debug_access",
     ]);
     expect(sev && "values" in sev && sev.values).toEqual(["critical", "high"]);
   });

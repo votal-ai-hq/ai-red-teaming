@@ -447,15 +447,25 @@ function mergeUniqueTool(
   tools: CodebaseAnalysis["tools"],
   nextTool: CodebaseAnalysis["tools"][number],
 ): void {
-  if (
-    tools.some(
-      (tool) =>
-        tool.name === nextTool.name && tool.parameters === nextTool.parameters,
-    )
-  ) {
+  const existingIndex = tools.findIndex((tool) => tool.name === nextTool.name);
+  if (existingIndex < 0) {
+    tools.push(nextTool);
     return;
   }
-  tools.push(nextTool);
+  const hasObjectSchema = (parameters: string): boolean => {
+    try {
+      const value = JSON.parse(parameters) as unknown;
+      return Boolean(value && typeof value === "object" && !Array.isArray(value));
+    } catch {
+      return false;
+    }
+  };
+  if (
+    !hasObjectSchema(tools[existingIndex].parameters) &&
+    hasObjectSchema(nextTool.parameters)
+  ) {
+    tools[existingIndex] = nextTool;
+  }
 }
 
 export async function enrichAnalysisWithTargetSurface(
@@ -468,7 +478,18 @@ export async function enrichAnalysisWithTargetSurface(
 
   try {
     const surface = await adapter.discoverSurface(config);
-    if (surface.tools?.length) {
+    if (surface.toolDescriptors?.length) {
+      for (const tool of surface.toolDescriptors) {
+        mergeUniqueTool(analysis.tools, {
+          name: tool.name,
+          description: tool.description ?? "Discovered from MCP surface",
+          parameters:
+            tool.inputSchema && typeof tool.inputSchema === "object"
+              ? JSON.stringify(tool.inputSchema)
+              : "unknown",
+        });
+      }
+    } else if (surface.tools?.length) {
       for (const toolName of surface.tools) {
         mergeUniqueTool(analysis.tools, {
           name: toolName,
