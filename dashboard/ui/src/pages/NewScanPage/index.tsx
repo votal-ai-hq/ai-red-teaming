@@ -193,6 +193,55 @@ function CollapsibleSection({
   );
 }
 
+/** A numbered scan step that can collapse — keeps the step badge/title but tucks
+ *  its body behind a chevron (like the LLM Configuration dropdown) so long
+ *  pickers (categories, strategies) don't force the page to scroll forever.
+ *  Shows a summary (e.g. selection count) in the header while collapsed. */
+function CollapsibleStep({
+  step,
+  title,
+  icon: Icon,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  step: number;
+  title: string;
+  icon: React.ElementType;
+  summary?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-muted/40 transition-colors"
+      >
+        <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold grid place-items-center shrink-0">
+          {step}
+        </div>
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 flex-1 min-w-0">
+          <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
+          {title}
+        </h2>
+        {summary != null && (
+          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">{summary}</span>
+        )}
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+        )}
+      </button>
+      {open && <div className="px-5 pb-5 pt-1 border-t border-border">{children}</div>}
+    </Card>
+  );
+}
+
 function FieldRow({
   label,
   hint,
@@ -1336,11 +1385,13 @@ export default function NewScanPage() {
 
         {/* ═══ Step 3: Attack Categories ═══ */}
         {ref && ref.categories.length > 0 && (
-          <section>
-            <SectionHeader step={3} title="Select attack categories" icon={Crosshair} />
-            <Card>
-              <CardContent className="pt-5">
-                {/* Compliance-framework presets — select the union of categories a
+          <CollapsibleStep
+            step={3}
+            title="Select attack categories"
+            icon={Crosshair}
+            summary={`${selectedCategories.length} / ${selectableCategories.length} selected`}
+          >
+            {/* Compliance-framework presets — select the union of categories a
                     framework's controls map to, and preview forward coverage. */}
                 {ref.frameworks && ref.frameworks.length > 0 && (
                   <CompliancePresets
@@ -1441,17 +1492,17 @@ export default function NewScanPage() {
                     All categories selected — comprehensive coverage
                   </p>
                 )}
-              </CardContent>
-            </Card>
-          </section>
+          </CollapsibleStep>
         )}
 
-        {/* ═══ Step 4: Strategies (pills, not dropdown) ═══ */}
+        {/* ═══ Step 4: Strategies ═══ */}
         {ref && ref.strategies.length > 0 && (
-          <section>
-            <SectionHeader step={4} title="Choose strategies" icon={Play} />
-            <Card>
-              <CardContent className="pt-5">
+          <CollapsibleStep
+            step={4}
+            title="Choose strategies"
+            icon={Play}
+            summary={`${selectedStrategies.length} / ${ref.strategies.length} selected`}
+          >
                 {isMcpTarget && (
                   <p className="text-[11px] text-muted-foreground mb-3">
                     Strategies shape LLM-generated attacks. MCP scans mainly run tool-call seed attacks, so strategies have limited effect here — leave LLM generation off for the most relevant MCP results.
@@ -1536,9 +1587,7 @@ export default function NewScanPage() {
                     All strategies selected
                   </p>
                 )}
-              </CardContent>
-            </Card>
-          </section>
+          </CollapsibleStep>
         )}
 
         {/* ═══ Step 5: Attack Configuration ═══ */}
