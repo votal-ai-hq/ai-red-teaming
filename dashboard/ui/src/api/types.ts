@@ -11,6 +11,15 @@ export interface AuthUser {
 }
 
 // ── Reports ──
+/** Confirmed-vulnerability counts by severity (verdict PASS grouped by the
+ *  attack's declared severity). Absent on reports from before this shipped. */
+export interface SeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
 export interface ReportMeta {
   filename: string;
   timestamp: string;
@@ -22,6 +31,8 @@ export interface ReportMeta {
   failed: number;
   errors: number;
   categoryCount?: number;
+  /** Confirmed vulnerabilities (verdict PASS) bucketed by severity. */
+  bySeverity?: SeverityCounts;
 }
 
 export interface ReportTrend {

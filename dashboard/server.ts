@@ -238,6 +238,14 @@ const MIME: Record<string, string> = {
 };
 
 // ── Report metadata cache ──
+/** Confirmed-vulnerability counts by severity (PASS verdicts grouped by the
+ *  attack's declared severity). Powers the dashboard Vulnerability Trends chart. */
+interface SeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
 interface ReportMeta {
   filename: string;
   timestamp: string;
@@ -249,6 +257,39 @@ interface ReportMeta {
   failed: number;
   errors: number;
   categoryCount: number;
+  /** Confirmed vulnerabilities (verdict PASS) bucketed by severity. */
+  bySeverity: SeverityCounts;
+}
+
+/** Count confirmed vulnerabilities (verdict === "PASS") by the attacking
+ *  payload's declared severity. Mirrors lib/report-generator's definition: a
+ *  vulnerability is a PASS; its severity is the attack's severity. PARTIAL /
+ *  FAIL are not confirmed compromises and are excluded. */
+function computeBySeverity(data: unknown): SeverityCounts {
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  const d = data as {
+    rounds?: { results?: unknown[] }[];
+    results?: unknown[];
+  };
+  const results: unknown[] = Array.isArray(d?.rounds)
+    ? d.rounds.flatMap((r) => (Array.isArray(r?.results) ? r.results : []))
+    : Array.isArray(d?.results)
+      ? d.results
+      : [];
+  for (const r of results) {
+    const res = r as {
+      verdict?: string;
+      severity?: string;
+      attack?: { severity?: string };
+    };
+    if (res?.verdict !== "PASS") continue;
+    // Severity lives on the attack; older reports may carry it top-level.
+    const sev = (res.attack?.severity ?? res.severity ?? "").toLowerCase();
+    if (sev === "critical" || sev === "high" || sev === "medium" || sev === "low") {
+      counts[sev] += 1;
+    }
+  }
+  return counts;
 }
 
 const metaCache = new Map<string, ReportMeta>();
@@ -327,6 +368,7 @@ function getReportMeta(filename: string): ReportMeta {
             (k) => (s.byCategory[k]?.total ?? 0) > 0,
           ).length
         : 0,
+      bySeverity: computeBySeverity(data),
     };
     metaCache.set(filename, meta);
     return meta;
@@ -342,6 +384,7 @@ function getReportMeta(filename: string): ReportMeta {
       failed: 0,
       errors: 0,
       categoryCount: 0,
+      bySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     };
     metaCache.set(filename, meta);
     return meta;
@@ -2808,6 +2851,10 @@ const server = createServer(
             failed: m.failed,
             errors: m.errors,
             categoryCount: 0,
+            // Best-effort severity breakdown from the report file if present on
+            // disk (cached). DB-only deployments without co-located files fall
+            // back to zeros — the chart degrades gracefully.
+            bySeverity: getReportMeta(m.filename).bySeverity,
             runId: m.runId || null,
           }));
           const merged = [...dbItems];

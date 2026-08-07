@@ -9,6 +9,12 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "src"),
     },
+    // Ensure a single React instance across the app and libraries like recharts
+    // (avoids "Invalid hook call / more than one copy of React" from dep bundling).
+    dedupe: ["react", "react-dom"],
+  },
+  optimizeDeps: {
+    include: ["recharts", "react", "react-dom"],
   },
   server: {
     port: 5173,

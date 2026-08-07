@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { getReportsMeta, getReport } from "@/api/reports";
 import { getRuns } from "@/api/runs";
-import type { ReportMeta, RunMeta, ReportTrend, ReportSummary } from "@/api/types";
+import type { ReportMeta, RunMeta, ReportSummary } from "@/api/types";
 import { ScoreRing } from "@/components/shared/ScoreRing";
-import { TrendChart } from "@/components/shared/TrendChart";
+import { VulnerabilityTrendsChart } from "@/components/shared/VulnerabilityTrendsChart";
 import {
   Card,
   CardContent,
@@ -120,7 +120,6 @@ function StatCard({
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [reportsMeta, setReportsMeta] = useState<ReportMeta[]>([]);
-  const [trend, setTrend] = useState<ReportTrend[]>([]);
   const [runs, setRuns] = useState<RunMeta[]>([]);
   const [byCategory, setByCategory] = useState<Record<string, { total: number; passed: number; findings: string[] }>>({});
   const [loading, setLoading] = useState(true);
@@ -130,7 +129,6 @@ export default function DashboardPage() {
     Promise.all([getReportsMeta(1, 200), getRuns()])
       .then(async ([reportsRes, runsRes]) => {
         setReportsMeta(reportsRes.items);
-        setTrend(reportsRes.trend ?? []);
         setRuns(runsRes);
 
         // Fetch latest report's summary.byCategory for category breakdown
@@ -249,7 +247,7 @@ export default function DashboardPage() {
       )}
 
       {/* ── Row 1: Score ring + stat cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Security Score — spans 2 cols on mobile */}
         <Card className="col-span-2 lg:col-span-1">
           <CardContent className="flex flex-col items-center justify-center pt-5 pb-4">
@@ -287,20 +285,10 @@ export default function DashboardPage() {
           icon={Activity}
           subtitle={`Risk: ${SEVERITY_CONFIG[getSeverity(avgScore)].label}`}
         />
-        {/* Trend sparkline */}
-        <Card>
-          <CardContent className="flex flex-col pt-5 pb-4 px-5">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Trend
-            </span>
-            {trend.length > 1 ? (
-              <TrendChart data={trend} width={140} height={52} />
-            ) : (
-              <span className="text-[11px] text-muted-foreground mt-2">Need 2+ scans</span>
-            )}
-          </CardContent>
-        </Card>
       </div>
+
+      {/* ── Vulnerability Trends (per-endpoint, by severity) ── */}
+      <VulnerabilityTrendsChart reports={reportsMeta} />
 
       {/* ── Row 2: Severity breakdown (Pepper-style colored dot + number row) ── */}
       <div>
