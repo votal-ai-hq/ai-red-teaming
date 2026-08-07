@@ -22,7 +22,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Shield, AlertTriangle, Play, Search, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Shield,
+  AlertTriangle,
+  Play,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Briefcase,
+  DollarSign,
+  Wrench,
+  History,
+  Scale,
+} from "lucide-react";
 
 /* ---------- helpers (unchanged logic) ---------- */
 
@@ -133,15 +145,29 @@ const severityBorderColors: Record<string, string> = {
   unknown: "border-l-gray-400 dark:border-l-gray-500",
 };
 
-/* ---------- AI risk analysis: single labelled prose field ---------- */
-function RiskField({ label, value }: { label: string; value?: string }) {
+/* ---------- AI risk analysis: single labelled prose field ----------
+   A colored icon + bold uppercase label give each section a clear heading, and
+   `divide-y` on the parent draws a rule between them, so the breakdown reads as
+   distinct sections rather than a wall of text. */
+function RiskField({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value?: string;
+  icon: React.ElementType;
+}) {
   if (!value || !value.trim()) return null;
   return (
-    <div>
-      <span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-        {label}
-      </span>
-      <p className="text-[13px] leading-relaxed text-foreground whitespace-pre-wrap break-words">
+    <div className="py-3.5 first:pt-0 last:pb-0">
+      <div className="flex items-center gap-2 mb-2">
+        <Icon className="w-4 h-4 text-primary shrink-0" />
+        <h4 className="text-xs font-bold uppercase tracking-wide text-foreground">
+          {label}
+        </h4>
+      </div>
+      <p className="text-sm leading-relaxed text-foreground/80 whitespace-pre-wrap break-words">
         {value}
       </p>
     </div>
@@ -197,12 +223,12 @@ function RiskResultRow({ result }: { result: RiskAnalysisResult }) {
         )}
       </button>
       {expanded && (
-        <div className="px-4 pb-4 pt-1 space-y-3 bg-muted/20 dark:bg-muted/10 border-t border-border/60">
-          <RiskField label="Business Impact" value={result.businessImpact} />
-          <RiskField label="Financial Exposure" value={result.financialExposure} />
-          <RiskField label="Remediation Estimate" value={result.remediationEstimate} />
-          <RiskField label="Related Incidents" value={result.relatedIncidents} />
-          <RiskField label="Compliance Risk" value={result.complianceRisk} />
+        <div className="px-4 pb-4 pt-3 bg-muted/20 dark:bg-muted/10 border-t border-border/60 divide-y divide-border/60">
+          <RiskField label="Business Impact" value={result.businessImpact} icon={Briefcase} />
+          <RiskField label="Financial Exposure" value={result.financialExposure} icon={DollarSign} />
+          <RiskField label="Remediation Estimate" value={result.remediationEstimate} icon={Wrench} />
+          <RiskField label="Related Incidents" value={result.relatedIncidents} icon={History} />
+          <RiskField label="Compliance Risk" value={result.complianceRisk} icon={Scale} />
         </div>
       )}
     </div>
