@@ -11,7 +11,15 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, extname, dirname, basename, resolve as resolvePath } from "node:path";
+import {
+  join,
+  extname,
+  dirname,
+  basename,
+  resolve as resolvePath,
+  relative as relativePath,
+  isAbsolute as isAbsolutePath,
+} from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -3981,10 +3989,12 @@ Be specific and factual. Reference real incidents and realistic financial figure
     }
     try {
       const fullPath = join(DASHBOARD_DIR, filePath);
-      // Ensure resolved path is within dashboard dir (prevents absolute path injection)
-      const resolvedDashboard = resolvePath(DASHBOARD_DIR);
-      const resolvedFull = resolvePath(fullPath);
-      if (!resolvedFull.startsWith(resolvedDashboard + "/") && resolvedFull !== resolvedDashboard) {
+      // Ensure resolved path is within dashboard dir (prevents absolute path
+      // injection). Compared via `relative()` rather than a "/"-suffixed
+      // prefix so it also holds on Windows, where separators are backslashes
+      // and the prefix check rejected every legitimate asset.
+      const rel = relativePath(resolvePath(DASHBOARD_DIR), resolvePath(fullPath));
+      if (rel.startsWith("..") || isAbsolutePath(rel)) {
         res.writeHead(400);
         res.end("Bad request");
         return;

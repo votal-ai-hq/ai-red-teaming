@@ -19,6 +19,19 @@ import {
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 import { EmptyState } from "@/components/shared/EmptyState";
 import {
+  ExpandableText,
+  InteractionFlow,
+  ProtocolTrace,
+  RequestPanel,
+  ResponsePanel,
+} from "./Interaction";
+import {
+  buildInteractionFlow,
+  describeRequest,
+  describeResponse,
+  isMcpResult,
+} from "@/lib/mcp-report";
+import {
   FileText,
   ArrowLeft,
   ArrowRight,
@@ -379,59 +392,6 @@ function ReportsGrid() {
   );
 }
 
-/* ─── Expandable text block ─── */
-
-function ExpandableText({ text, maxLines = 4 }: { text: string; maxLines?: number }) {
-  const [showAll, setShowAll] = useState(false);
-  const isLong = text.length > maxLines * 100;
-
-  return (
-    <div>
-      <p className={`text-[13px] text-foreground whitespace-pre-wrap break-words ${!showAll && isLong ? `line-clamp-${maxLines}` : ""}`}
-         style={!showAll && isLong ? { WebkitLineClamp: maxLines, display: "-webkit-box", WebkitBoxOrient: "vertical", overflow: "hidden" } : undefined}
-      >
-        {text}
-      </p>
-      {isLong && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setShowAll(!showAll); }}
-          className="text-[11px] font-medium text-primary hover:underline mt-1"
-        >
-          {showAll ? "Show less" : "Show more"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/**
- * Extract human-readable response text from a captured agent response body,
- * which may be a plain string OR a structured object like
- * `{ response, tool_calls, user, ... }` or `{ error, riskLevel, ... }`.
- * Returns "" when there's nothing meaningful to show.
- */
-function extractResponseText(rb: unknown): string {
-  if (rb == null) return "";
-  if (typeof rb === "string") return rb;
-  if (typeof rb !== "object") return String(rb);
-  const o = rb as Record<string, unknown>;
-  // The agent's textual answer (target responsePath is typically "response").
-  for (const k of ["response", "content", "text", "message", "answer", "output", "reply"]) {
-    const v = o[k];
-    if (typeof v === "string" && v.trim()) return v;
-  }
-  // Guardrail-blocked / error bodies — surface the error message.
-  if (typeof o.error === "string" && o.error.trim()) return o.error;
-  // Nothing useful (e.g. empty object) — signal "no text".
-  if (Object.keys(o).length === 0) return "";
-  // Fallback: show the raw body so nothing is silently dropped.
-  try {
-    return JSON.stringify(rb, null, 2);
-  } catch {
-    return String(rb);
-  }
-}
-
 /* ─── Per-vulnerability compliance mapping ─── */
 
 interface ComplianceControlRef {
@@ -552,29 +512,39 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
     ? result.idealResponse as { content?: string; explanation?: string }
     : typeof result.idealResponse === "string" ? { content: result.idealResponse } : null;
 
-  const requestText = result.payload
-    || (conversations.length > 0 && conversations[0]?.role === "user" ? conversations[0].content : null)
-    || (atk?.payload ? JSON.stringify(atk.payload, null, 2) : "");
-  // Resolve the agent's response text. Prefer the raw responseBody; otherwise
-  // fall back to the LAST non-user turn of the conversation — multi-turn attacks
-  // often end on the attacker's user turn, so the final assistant/tool turn is
-  // the real response. Empty => no text response (e.g. tool-call side-channel),
-  // handled with a placeholder below so the Response panel never vanishes.
-  const lastAgentTurn = [...conversations]
-    .reverse()
-    .find((s) => s.role && s.role !== "user" && (s.content ?? "").trim());
-  // responseBody may be a string or a structured object ({ response, ... });
-  // extract the agent's text either way, then fall back to the last agent turn.
-  const responseText =
-    extractResponseText(result.responseBody) || (lastAgentTurn?.content ?? "");
-  // Whether this row represents an actual HTTP interaction (so a Response panel
-  // belongs even when there's no text — vs. static/codebase findings).
+  // MCP (and agent) traffic is stored as nested JSON. Turn it into structured
+  // summaries — labelled operation/tool/arguments and the server's text — while
+  // keeping the raw object for the per-panel "raw JSON" toggle.
+  const attackPayload = atk?.payload;
+  const request = describeRequest(attackPayload ?? result.payload);
+  const response = describeResponse(result.responseBody);
+  const isMcp = isMcpResult({
+    attackPayload,
+    responseBody: result.responseBody,
+    executionTrace: result.executionTrace,
+  });
+  // The full ordered sequence of interactions: every request the scanner sent,
+  // every response it got, and — when the target was driven agent-in-the-loop —
+  // the model's own turns between the two.
+  const flow = buildInteractionFlow({
+    attackPayload: attackPayload ?? result.payload,
+    responseBody: result.responseBody,
+    statusCode: result.statusCode,
+    responseTimeMs: result.responseTimeMs,
+    conversation: conversations,
+    executionTrace: result.executionTrace,
+  });
+  // Whether this row represents an actual request/response interaction (so a
+  // Response panel belongs even when there's no text — vs. static findings).
   const hasInteraction =
-    Boolean(requestText) ||
-    Boolean(responseText) ||
+    !request.isEmpty ||
+    !response.isEmpty ||
     result.statusCode != null ||
     result.responseTimeMs != null ||
     conversations.length > 0;
+  // With more than one exchange the flow IS the request/response view; the
+  // single-exchange case reads better as two side-by-side panels.
+  const showPanels = hasInteraction && flow.length <= 2;
 
   return (
     <>
@@ -656,36 +626,18 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                 </div>
               )}
 
-              {/* ── Request & Response ── */}
-              {hasInteraction && (
+              {/* ── Request & Response (single exchange) ── */}
+              {showPanels && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {requestText && (
-                    <div className="min-w-0 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/30 dark:bg-blue-950/10 p-3">
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-1.5 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        Request
-                      </div>
-                      <ExpandableText text={requestText} maxLines={6} />
-                    </div>
-                  )}
-                  {/* Always render the Response panel for an interaction — with a
-                      placeholder when the agent produced no text (e.g. the output
-                      was via tool calls / a side-channel). */}
-                  <div className="min-w-0 rounded-lg border border-border bg-card p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
-                      Response
-                      {result.statusCode && <span className="font-normal ml-1">HTTP {result.statusCode}</span>}
-                      {result.responseTimeMs != null && <span className="font-normal ml-1">{result.responseTimeMs}ms</span>}
-                    </div>
-                    {responseText ? (
-                      <ExpandableText text={responseText} maxLines={6} />
-                    ) : (
-                      <p className="text-xs italic text-muted-foreground">
-                        No text response — the agent&rsquo;s output was via tool calls or a side-channel. See Findings below.
-                      </p>
-                    )}
-                  </div>
+                  <RequestPanel request={request} />
+                  {/* Always render the Response panel for an interaction — the
+                      panel itself explains an empty body (e.g. output went via
+                      tool calls / a side-channel). */}
+                  <ResponsePanel
+                    response={response}
+                    statusCode={result.statusCode}
+                    timeMs={result.responseTimeMs}
+                  />
                 </div>
               )}
 
@@ -788,32 +740,11 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                 </div>
               )}
 
-              {/* ── Conversation / Multi-turn steps ── */}
-              {conversations.length > 0 && (
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Conversation ({conversations.length} steps)
-                  </div>
-                  <div className="space-y-1.5">
-                    {conversations.map((step, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-lg px-3 py-2 text-xs ${
-                          step.role === "user"
-                            ? "bg-blue-50 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border border-blue-100 dark:border-blue-900"
-                            : "bg-muted text-muted-foreground border border-border"
-                        }`}
-                      >
-                        <span className="font-semibold capitalize">{step.role}: </span>
-                        <span className="whitespace-pre-wrap break-words">{step.content}</span>
-                        {step.statusCode && (
-                          <span className="ml-2 text-[10px] text-muted-foreground">[{step.statusCode}]</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* ── Interaction flow: the full user → model → server sequence ── */}
+              {!showPanels && <InteractionFlow steps={flow} isMcp={isMcp} />}
+
+              {/* ── Wire-level MCP transcript (collapsed) ── */}
+              {result.executionTrace && <ProtocolTrace trace={result.executionTrace} />}
 
               {/* ── Judge Policy ── */}
               {result.policyUsed && (

@@ -1302,9 +1302,13 @@ async function runRedTeamImpl(
 
           result.conversation = conversationHistory.map((ch) => ({
             stepIndex: ch.stepIndex,
-            payload: { message: ch.userMessage },
+            // Record the exact payload sent (MCP: _mcpTool/_mcpArguments), so the
+            // report renders the real call — not just a chat message.
+            payload: ch.payload ?? { message: ch.userMessage },
             statusCode: stepResults[ch.stepIndex]?.statusCode ?? 0,
-            responseBody: ch.aiResponse,
+            // Prefer the full response body so the report can render structured
+            // output / error codes; fall back to the extracted text.
+            responseBody: stepResults[ch.stepIndex]?.body ?? ch.aiResponse,
             responseTimeMs: stepResults[ch.stepIndex]?.timeMs ?? 0,
           }));
 
@@ -1541,9 +1545,12 @@ async function runRedTeamImpl(
               } else {
                 result.conversation = conversationHistory.map((ch) => ({
                   stepIndex: ch.stepIndex,
-                  payload: { message: ch.userMessage },
+                  // Record the exact payload sent (MCP: _mcpTool/_mcpArguments)
+                  // so the report renders the real call, not just a message.
+                  payload: ch.payload ?? { message: ch.userMessage },
                   statusCode: stepResults[ch.stepIndex]?.statusCode ?? 0,
-                  responseBody: ch.aiResponse,
+                  // Prefer the full response body for structured rendering.
+                  responseBody: stepResults[ch.stepIndex]?.body ?? ch.aiResponse,
                   responseTimeMs: stepResults[ch.stepIndex]?.timeMs ?? 0,
                 }));
               }
