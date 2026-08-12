@@ -78,10 +78,20 @@ export interface ReportResult {
   idealResponse?: string | { content?: string; explanation?: string };
 }
 
+/**
+ * One turn of a multi-turn attack. Scanner runs record the request/response
+ * pair (`lib/types.ts` ConversationStep); older/agent transcripts recorded a
+ * chat message instead, so both shapes are optional here.
+ */
 export interface ConversationStep {
-  role: string;
-  content: string;
+  stepIndex?: number;
+  /** The payload sent this turn (MCP: `_mcpOperation`/`_mcpTool`/`_mcpArguments`). */
+  payload?: string | Record<string, unknown>;
+  responseBody?: string | Record<string, unknown>;
+  responseTimeMs?: number;
   statusCode?: number;
+  role?: string;
+  content?: string;
 }
 
 export interface AffectedFile {
@@ -89,8 +99,20 @@ export interface AffectedFile {
   reason: string;
 }
 
+/** JSON-RPC wire message recorded for an MCP exchange. */
+export interface McpTraceEvent {
+  direction: "client->server" | "server->client" | "server->client-notify";
+  method?: string;
+  payload?: unknown;
+}
+
+/** Mirrors `McpExecutionTrace` in lib/types.ts. */
 export interface ExecutionTrace {
-  transcript?: string;
+  transport?: string;
+  operation?: string;
+  serverName?: string;
+  protocolVersion?: string;
+  transcript?: McpTraceEvent[];
   stderr?: string;
 }
 
