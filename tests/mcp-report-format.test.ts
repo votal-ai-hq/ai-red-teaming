@@ -6,6 +6,7 @@ import {
   describeResponse,
   isMcpResult,
   parseJsonish,
+  promoteStructuredText,
   requestTitle,
 } from "../dashboard/ui/src/lib/mcp-report.js";
 
@@ -204,6 +205,45 @@ describe("describeResponse", () => {
     expect(response.isError).toBe(false);
     expect(response.headline).toBe("Tool executed successfully");
     expect(response.text).toBe("Flight AA100 · $220\n\nFlight DL200 · $260");
+  });
+
+  it("turns nested JSON tool output into fields and a table, not a raw blob", () => {
+    const payload = {
+      data: [
+        {
+          id: "cmqrqiw2l",
+          totalFindings: 486,
+          critical: 101,
+          high: 40,
+        },
+      ],
+    };
+    const response = describeResponse({
+      operation: "tools/call",
+      result: {
+        content: [{ type: "text", text: JSON.stringify(payload) }],
+        isError: false,
+      },
+    });
+    expect(response.text).toBeUndefined();
+    expect(response.tables?.[0]?.title).toBe("data");
+    expect(response.tables?.[0]?.rows[0]).toMatchObject({
+      id: "cmqrqiw2l",
+      totalFindings: "486",
+      critical: "101",
+      high: "40",
+    });
+  });
+
+  it("promoteStructuredText unwraps double-encoded JSON", () => {
+    const inner = { totalFindings: 12, critical: 3 };
+    const structured = promoteStructuredText(JSON.stringify(JSON.stringify(inner)));
+    expect(structured.fields).toEqual(
+      expect.arrayContaining([
+        { label: "totalFindings", value: "12" },
+        { label: "critical", value: "3" },
+      ]),
+    );
   });
 
   it("handles a stored (stringified) body", () => {

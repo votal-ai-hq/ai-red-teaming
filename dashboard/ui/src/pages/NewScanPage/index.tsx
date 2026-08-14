@@ -134,30 +134,54 @@ function prettyCat(cat: string) {
 }
 
 
-function SectionHeader({
+function ScanStep({
   step,
   title,
   icon: Icon,
   hint,
+  summary,
+  open,
+  onToggle,
+  children,
 }: {
   step: number;
   title: string;
   icon: React.ElementType;
   hint?: string;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-3 mb-4">
-      <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold grid place-items-center shrink-0">
-        {step}
-      </div>
-      <div className="min-w-0">
-        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Icon className="w-4 h-4 text-muted-foreground" />
-          {title}
-        </h2>
-        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
-      </div>
-    </div>
+    <section className="border border-border rounded-xl overflow-hidden bg-card">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-start gap-3 px-4 py-3.5 text-left hover:bg-muted/40 transition-colors"
+      >
+        <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold grid place-items-center shrink-0">
+          {step}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Icon className="w-4 h-4 text-muted-foreground" />
+            {title}
+          </h2>
+          {open
+            ? hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>
+            : summary && (
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">{summary}</p>
+              )}
+        </div>
+        {open ? (
+          <ChevronDown className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+        )}
+      </button>
+      {open && <div className="px-4 pb-4 pt-2 border-t border-border">{children}</div>}
+    </section>
   );
 }
 
@@ -385,6 +409,15 @@ export default function NewScanPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [openSteps, setOpenSteps] = useState<Record<number, boolean>>({
+    1: true,
+    2: true,
+    3: false,
+    4: false,
+    5: false,
+  });
+  const toggleStep = (step: number) =>
+    setOpenSteps((prev) => ({ ...prev, [step]: !prev[step] }));
 
   useEffect(() => {
     Promise.all([
@@ -547,6 +580,7 @@ export default function NewScanPage() {
       setAdaptiveRounds(d.rounds);
       setConcurrency(d.concurrency);
       setMaxAttacksPerCategory(d.maxAttacksPerCategory);
+      setOpenSteps((prev) => ({ ...prev, 1: false, 2: true }));
     },
     [ref],
   );
@@ -948,8 +982,18 @@ export default function NewScanPage() {
         </section>
 
         {/* ═══ Step 1: Template ═══ */}
-        <section>
-          <SectionHeader step={1} title="Choose a scan template" icon={Layers} />
+        <ScanStep
+          step={1}
+          title="Choose a scan template"
+          icon={Layers}
+          open={openSteps[1]}
+          onToggle={() => toggleStep(1)}
+          summary={
+            activeTemplate
+              ? TEMPLATES.find((t) => t.key === activeTemplate)?.label
+              : "Quick, full, or custom"
+          }
+        >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {TEMPLATES.map((tpl) => {
               const Icon = tpl.icon;
@@ -987,11 +1031,21 @@ export default function NewScanPage() {
               );
             })}
           </div>
-        </section>
+        </ScanStep>
 
         {/* ═══ Step 2: Target ═══ */}
-        <section>
-          <SectionHeader step={2} title="Configure target" icon={Target} />
+        <ScanStep
+          step={2}
+          title="Configure target"
+          icon={Target}
+          open={openSteps[2]}
+          onToggle={() => toggleStep(2)}
+          summary={
+            targetType === "mcp"
+              ? mcpUrl || "MCP server URL"
+              : baseUrl || "Base URL + agent endpoint"
+          }
+        >
           <Card>
             <CardContent className="pt-5 space-y-5">
               {/* Scan name (optional) */}
@@ -1332,12 +1386,23 @@ export default function NewScanPage() {
               </FieldRow>
             </CardContent>
           </Card>
-        </section>
+        </ScanStep>
 
         {/* ═══ Step 3: Attack Categories ═══ */}
         {ref && ref.categories.length > 0 && (
-          <section>
-            <SectionHeader step={3} title="Select attack categories" icon={Crosshair} />
+          <ScanStep
+            step={3}
+            title="Select attack categories"
+            icon={Crosshair}
+            open={openSteps[3]}
+            onToggle={() => toggleStep(3)}
+            summary={
+              selectedCategories.length === 0 ||
+              selectedCategories.length === selectableCategories.length
+                ? "All categories"
+                : `${selectedCategories.length} selected`
+            }
+          >
             <Card>
               <CardContent className="pt-5">
                 {/* Compliance-framework presets — select the union of categories a
@@ -1443,13 +1508,23 @@ export default function NewScanPage() {
                 )}
               </CardContent>
             </Card>
-          </section>
+          </ScanStep>
         )}
 
         {/* ═══ Step 4: Strategies (pills, not dropdown) ═══ */}
         {ref && ref.strategies.length > 0 && (
-          <section>
-            <SectionHeader step={4} title="Choose strategies" icon={Play} />
+          <ScanStep
+            step={4}
+            title="Choose strategies"
+            icon={Play}
+            open={openSteps[4]}
+            onToggle={() => toggleStep(4)}
+            summary={
+              selectedStrategies.length === 0
+                ? "All strategies"
+                : `${selectedStrategies.length} selected`
+            }
+          >
             <Card>
               <CardContent className="pt-5">
                 {isMcpTarget && (
@@ -1538,12 +1613,18 @@ export default function NewScanPage() {
                 )}
               </CardContent>
             </Card>
-          </section>
+          </ScanStep>
         )}
 
         {/* ═══ Step 5: Attack Configuration ═══ */}
-        <section>
-          <SectionHeader step={5} title="Attack configuration" icon={Gauge} />
+        <ScanStep
+          step={5}
+          title="Attack configuration"
+          icon={Gauge}
+          open={openSteps[5]}
+          onToggle={() => toggleStep(5)}
+          summary={`${attackMode} · ${adaptiveRounds} rounds · ${maxAttacksPerCategory}/category`}
+        >
           <Card>
             <CardContent className="pt-5 space-y-5">
               {/* Attack Mode */}
@@ -1685,7 +1766,7 @@ export default function NewScanPage() {
               )}
             </CardContent>
           </Card>
-        </section>
+        </ScanStep>
 
         {/* ═══ Collapsible sections ═══ */}
         <div className="space-y-3">

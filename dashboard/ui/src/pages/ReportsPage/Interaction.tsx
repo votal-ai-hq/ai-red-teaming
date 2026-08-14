@@ -9,6 +9,7 @@ import {
   type KeyValue,
   type RequestSummary,
   type ResponseSummary,
+  type StructuredTable,
   type TraceLike,
 } from "@/lib/mcp-report";
 
@@ -156,6 +157,59 @@ function Tag({ text }: { text: string }) {
   );
 }
 
+const HIGHLIGHT_COLS = /^(critical|high|medium|low|totalFindings|total_findings|vulnerabilities|vulns|passed|failed|score)$/i;
+
+function ResultTable({ table }: { table: StructuredTable }) {
+  if (table.columns.length === 0 || table.rows.length === 0) return null;
+  const cols = table.columns.slice(0, 8);
+  return (
+    <div className="overflow-x-auto rounded-md border border-border">
+      {table.title && (
+        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/40 border-b border-border">
+          {table.title}
+        </div>
+      )}
+      <table className="w-full text-left text-[11px]">
+        <thead>
+          <tr className="border-b border-border bg-muted/30">
+            {cols.map((col) => (
+              <th
+                key={col}
+                className="px-2 py-1.5 font-semibold text-muted-foreground whitespace-nowrap"
+              >
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.slice(0, 20).map((row, i) => (
+            <tr key={i} className="border-b border-border last:border-0">
+              {cols.map((col) => (
+                <td
+                  key={col}
+                  className={`px-2 py-1.5 align-top whitespace-pre-wrap break-words max-w-[220px] ${
+                    HIGHLIGHT_COLS.test(col)
+                      ? "font-semibold text-foreground"
+                      : "text-foreground"
+                  }`}
+                >
+                  {row[col] || "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {table.rows.length > 20 && (
+        <p className="px-2 py-1 text-[10px] italic text-muted-foreground">
+          Showing 20 of {table.rows.length} rows. Open raw JSON for the rest.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function truncateForNote(text: string): string {
   return text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
 }
@@ -279,6 +333,10 @@ export function ResponseBody({ response }: { response: ResponseSummary }) {
       )}
 
       <Fields items={response.fields} />
+
+      {response.tables?.map((table, i) => (
+        <ResultTable key={`${table.title ?? "table"}-${i}`} table={table} />
+      ))}
 
       {loop && (
         <div className="space-y-1.5">
