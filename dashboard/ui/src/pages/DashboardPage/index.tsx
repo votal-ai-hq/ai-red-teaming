@@ -5,6 +5,8 @@ import { getRuns } from "@/api/runs";
 import type { ReportMeta, RunMeta, ReportTrend, ReportSummary } from "@/api/types";
 import { ScoreRing } from "@/components/shared/ScoreRing";
 import { TrendChart } from "@/components/shared/TrendChart";
+import { MethodologyInfo } from "@/components/shared/MethodologyInfo";
+import { scoreBand, type ScoreBand } from "@/lib/score-methodology";
 import {
   Card,
   CardContent,
@@ -32,7 +34,7 @@ import {
 
 /* ─── helpers ─── */
 
-type SeverityLevel = "critical" | "high" | "medium" | "low";
+type SeverityLevel = ScoreBand;
 
 const SEVERITY_CONFIG: Record<
   SeverityLevel,
@@ -49,10 +51,7 @@ function prettyCat(cat: string) {
 }
 
 function getSeverity(score: number): SeverityLevel {
-  if (score < 30) return "critical";
-  if (score < 50) return "high";
-  if (score < 70) return "medium";
-  return "low";
+  return scoreBand(score);
 }
 
 function fmtDate(iso: string) {
@@ -249,12 +248,13 @@ export default function DashboardPage() {
       )}
 
       {/* ── Row 1: Score ring + stat cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Security Score — spans 2 cols on mobile */}
         <Card className="col-span-2 lg:col-span-1">
           <CardContent className="flex flex-col items-center justify-center pt-5 pb-4">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 inline-flex items-center gap-1">
               Score
+              <MethodologyInfo topic="score" label="How the security score is calculated" />
             </span>
             <ScoreRing score={latestScore} size={88} />
             <span className="text-[11px] text-muted-foreground mt-1.5">Latest scan</span>
@@ -287,25 +287,35 @@ export default function DashboardPage() {
           icon={Activity}
           subtitle={`Risk: ${SEVERITY_CONFIG[getSeverity(avgScore)].label}`}
         />
-        {/* Trend sparkline */}
-        <Card>
-          <CardContent className="flex flex-col pt-5 pb-4 px-5">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
-              Trend
-            </span>
-            {trend.length > 1 ? (
-              <TrendChart data={trend} width={140} height={52} />
-            ) : (
-              <span className="text-[11px] text-muted-foreground mt-2">Need 2+ scans</span>
-            )}
-          </CardContent>
-        </Card>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base font-semibold">Score trend</CardTitle>
+            <span className="text-[11px] text-muted-foreground">
+              Y-axis is security score (0–100). X-axis is scan date.
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {trend.length > 1 ? (
+            <TrendChart data={trend} width={720} height={240} />
+          ) : (
+            <p className="text-xs text-muted-foreground py-6">
+              Need 2+ completed scans to plot a trend.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Row 2: Severity breakdown (Pepper-style colored dot + number row) ── */}
       <div>
       <div className="flex items-baseline justify-between mb-2">
-        <h2 className="text-sm font-semibold text-foreground">Scans by Severity</h2>
+        <h2 className="text-sm font-semibold text-foreground inline-flex items-center gap-1.5">
+          Scans by Severity
+          <MethodologyInfo topic="both" label="How Critical and High are defined" />
+        </h2>
         <span className="text-[11px] text-muted-foreground">
           Scans grouped by overall risk score
         </span>

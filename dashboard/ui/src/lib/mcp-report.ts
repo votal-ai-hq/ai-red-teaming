@@ -80,6 +80,125 @@ export function parseJsonish(value: unknown): {
   }
 }
 
+/** Recursively parse JSON-encoded strings so nested payloads become objects. */
+export function unwrapJsonDeep(value: unknown, depth = 0): unknown {
+  if (depth > 5) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^[[{"]/.test(trimmed)) {
+      try {
+        const parsed = JSON.parse(
+          trimmed.endsWith(TRUNCATION_MARK)
+            ? trimmed.slice(0, -TRUNCATION_MARK.length)
+            : trimmed,
+        );
+        return unwrapJsonDeep(parsed, depth + 1);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => unwrapJsonDeep(entry, depth + 1));
+  }
+  if (isRecord(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = unwrapJsonDeep(entry, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+export interface StructuredTable {
+  title?: string;
+  columns: string[];
+  rows: Record<string, string>[];
+}
+
+export interface StructuredPayload {
+  text?: string;
+  fields: KeyValue[];
+  tables: StructuredTable[];
+}
+
+function recordsToTable(
+  records: Record<string, unknown>[],
+  title?: string,
+): StructuredTable {
+  const columns: string[] = [];
+  for (const rec of records) {
+    for (const key of Object.keys(rec)) {
+      if (!columns.includes(key)) columns.push(key);
+    }
+  }
+  return {
+    title,
+    columns,
+    rows: records.map((rec) => {
+      const row: Record<string, string> = {};
+      for (const col of columns) {
+        row[col] = rec[col] == null ? "" : formatValue(rec[col]);
+      }
+      return row;
+    }),
+  };
+}
+
+function structureValue(value: unknown): StructuredPayload {
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value.every(isRecord)) {
+      return { fields: [], tables: [recordsToTable(value)] };
+    }
+    return {
+      text: value.map((entry) => formatValue(entry)).join("\n"),
+      fields: [],
+      tables: [],
+    };
+  }
+  if (!isRecord(value)) {
+    return { text: formatValue(value), fields: [], tables: [] };
+  }
+
+  const fields: KeyValue[] = [];
+  const tables: StructuredTable[] = [];
+  for (const [key, val] of Object.entries(value)) {
+    if (Array.isArray(val) && val.length > 0 && val.every(isRecord)) {
+      tables.push(recordsToTable(val, key));
+      continue;
+    }
+    if (isRecord(val)) {
+      const nested = structureValue(val);
+      for (const field of nested.fields) {
+        fields.push({ label: `${key}.${field.label}`, value: field.value });
+      }
+      for (const table of nested.tables) {
+        tables.push({ ...table, title: table.title ? `${key}.${table.title}` : key });
+      }
+      if (nested.text && nested.fields.length === 0 && nested.tables.length === 0) {
+        fields.push({ label: key, value: nested.text });
+      }
+      continue;
+    }
+    fields.push({ label: key, value: formatValue(val) });
+  }
+  return { fields, tables };
+}
+
+/**
+ * If `text` is a JSON object/array (including double-encoded strings), turn it
+ * into labelled fields and tables instead of leaving a raw JSON blob.
+ */
+export function promoteStructuredText(text: string): StructuredPayload {
+  const unwrapped = unwrapJsonDeep(text);
+  if (typeof unwrapped === "string") {
+    return { text: unwrapped, fields: [], tables: [] };
+  }
+  return structureValue(unwrapped);
+}
+
 /* ─── request side ─── */
 
 export interface AgentScenarioSummary {
@@ -293,6 +412,8 @@ export interface ResponseSummary {
   /** The response text, unescaped and ready to print. */
   text?: string;
   fields: KeyValue[];
+  /** Nested JSON arrays rendered as tables instead of a JSON blob. */
+  tables?: StructuredTable[];
   agentLoop?: AgentLoopSummary;
   truncated: boolean;
   isEmpty: boolean;
@@ -461,12 +582,21 @@ export function describeResponse(body: unknown): ResponseSummary {
       const { text, fields } = contentToText(result.content);
       const match = MCP_ERROR_RE.exec(text.trim());
       const isError = result.isError === true || Boolean(match);
+      const bodyText = match ? match[2] : text;
+      const structured = promoteStructuredText(bodyText);
       if (isRecord(result.structuredContent)) {
-        fields.push({
-          label: "structuredContent",
-          value: formatValue(result.structuredContent),
-        });
+        const nested = structureValue(unwrapJsonDeep(result.structuredContent));
+        structured.fields.push(...nested.fields);
+        structured.tables.push(...nested.tables);
+        if (nested.text) {
+          structured.fields.push({
+            label: "structuredContent",
+            value: nested.text,
+          });
+        }
       }
+      const hasStructure =
+        structured.tables.length > 0 || structured.fields.length > 0;
       return {
         ...base,
         operation,
@@ -478,9 +608,10 @@ export function describeResponse(body: unknown): ResponseSummary {
           : isError
             ? "Tool reported an error"
             : "Tool executed successfully",
-        text: match ? match[2] : text,
-        fields,
-        isEmpty: !text && fields.length === 0,
+        text: hasStructure ? structured.text : bodyText,
+        fields: [...fields, ...structured.fields],
+        tables: structured.tables,
+        isEmpty: !bodyText && fields.length === 0 && !hasStructure,
       };
     }
 
@@ -634,21 +765,19 @@ export function describeResponse(body: unknown): ResponseSummary {
   }
 
   // Anything else — keep every field visible rather than dumping a blob.
-  const fields = isRecord(result)
-    ? Object.entries(result).map(([label, value]) => ({
-        label,
-        value: formatValue(value),
-      }))
-    : [];
-  const text = fields.length === 0 ? formatValue(result) : undefined;
+  const structured = structureValue(unwrapJsonDeep(result));
   return {
     ...base,
     operation,
     kind: "json",
     isError: false,
-    text,
-    fields,
-    isEmpty: fields.length === 0 && !text,
+    text: structured.text,
+    fields: structured.fields,
+    tables: structured.tables,
+    isEmpty:
+      !structured.text &&
+      structured.fields.length === 0 &&
+      structured.tables.length === 0,
   };
 }
 

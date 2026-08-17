@@ -6,6 +6,7 @@ import { promoteFinding } from "@/api/datasets";
 import type { ReportMeta, FullReport, ReportResult, ReportSummary, ComplianceResult, UsageSummary } from "@/api/types";
 import { useDebounce } from "@/hooks/useDebounce";
 import { ScoreRing } from "@/components/shared/ScoreRing";
+import { MethodologyInfo } from "@/components/shared/MethodologyInfo";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -1170,7 +1171,10 @@ function ReportDetail({ filename }: { filename: string }) {
             {/* Score ring */}
             <div className="flex flex-col items-center">
               <ScoreRing score={stats.score} size={80} />
-              <span className="text-[11px] text-muted-foreground mt-1">Security Score</span>
+              <span className="text-[11px] text-muted-foreground mt-1 inline-flex items-center gap-1">
+                Security Score
+                <MethodologyInfo topic="both" label="How the score and severity are calculated" />
+              </span>
             </div>
 
             {/* Stats cards */}

@@ -27,6 +27,8 @@ export interface ReportMeta {
 export interface ReportTrend {
   date: string;
   score: number;
+  vulns?: number;
+  total?: number;
 }
 
 export interface ReportsMetaResponse {
