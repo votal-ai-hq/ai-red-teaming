@@ -806,10 +806,15 @@ export async function executeAttack(
     if (contentType.includes("text/event-stream")) {
       responseBody = await readSseResponse(res);
     } else {
+      // Read the body stream exactly once. Calling res.json() and then
+      // res.text() on a failed parse double-consumes the stream and throws
+      // "Body is unusable: Body has already been read", which surfaced as a
+      // spurious connection error and silently dropped the attack result.
+      const raw = await res.text();
       try {
-        responseBody = await res.json();
+        responseBody = JSON.parse(raw);
       } catch {
-        responseBody = await res.text();
+        responseBody = raw;
       }
     }
 
