@@ -133,6 +133,30 @@ export function interpolateVars(text: string): string {
     );
 }
 
+/**
+ * Merge header maps case-insensitively so we never emit two variants of the
+ * same header name (e.g. a caller-supplied `content-type` alongside our default
+ * `Content-Type`). Later sources win, and the last-seen casing for a given
+ * header is the one emitted. This matters because fetch() combines duplicate
+ * header names into a single comma-joined value ("application/json, application/json"),
+ * which makes strict servers (e.g. FastAPI) refuse to JSON-decode the body and
+ * reject a perfectly valid request body with a misleading 422.
+ */
+function mergeHeaders(
+  ...sources: (Record<string, string> | undefined)[]
+): Record<string, string> {
+  const byLower = new Map<string, { key: string; value: string }>();
+  for (const src of sources) {
+    if (!src) continue;
+    for (const [k, v] of Object.entries(src)) {
+      byLower.set(k.toLowerCase(), { key: k, value: v });
+    }
+  }
+  const out: Record<string, string> = {};
+  for (const { key, value } of byLower.values()) out[key] = value;
+  return out;
+}
+
 /** Recursively interpolate all string values in an object. */
 function interpolateObject(obj: unknown): unknown {
   if (typeof obj === "string") return interpolateVars(obj);
@@ -545,11 +569,11 @@ export async function executeAttack(
   const url = interpolateVars(
     `${config.target.baseUrl}${config.target.agentEndpoint}`,
   );
-  const rawHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(apiTemplate?.headers ?? {}),
-    ...(attack.headers ?? {}),
-  };
+  const rawHeaders: Record<string, string> = mergeHeaders(
+    { "Content-Type": "application/json" },
+    apiTemplate?.headers,
+    attack.headers,
+  );
   // Interpolate {{var:name}} and {{uuid}} in header values
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawHeaders)) {
@@ -683,11 +707,15 @@ export async function executeAttack(
   // Ensure the body is properly formatted and Content-Type is set
   const requestBody = JSON.stringify(body);
 
-  // Force Content-Type to be application/json for LiteLLM compatibility
-  const finalHeaders = {
-    ...headers,
-    "Content-Type": "application/json",
-  };
+  // `headers` already carries exactly one Content-Type (our default, or a
+  // caller-supplied override via customApiTemplate.headers). Only add the
+  // default if none is present — re-adding "Content-Type" here would duplicate
+  // a caller's lowercase "content-type" and fetch would comma-join them,
+  // breaking JSON body parsing on strict servers.
+  const finalHeaders: Record<string, string> = { ...headers };
+  if (!Object.keys(finalHeaders).some((k) => k.toLowerCase() === "content-type")) {
+    finalHeaders["Content-Type"] = "application/json";
+  }
 
   // Show debug output only if explicitly requested via environment variable
   const showDebug = process.env.DEBUG_ATTACKS === "true";
