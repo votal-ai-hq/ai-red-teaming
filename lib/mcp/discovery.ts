@@ -18,10 +18,11 @@ export async function discoverMcpSurface(
   const session = new McpSession(config);
   try {
     const init = await session.initialize();
-    const [tools, prompts, resources] = await Promise.all([
+    const [tools, prompts, resources, resourceTemplates] = await Promise.all([
       session.listTools().catch(() => []),
       session.listPrompts().catch(() => []),
       session.listResources().catch(() => []),
+      session.listResourceTemplates().catch(() => []),
     ]);
 
     return {
@@ -32,6 +33,7 @@ export async function discoverMcpSurface(
       tools,
       prompts,
       resources,
+      resourceTemplates,
       instructions: init.instructions,
     };
   } finally {

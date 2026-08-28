@@ -32,6 +32,8 @@
       "mcp_tool_namespace_collision",
       "mcp_tool_poisoning",
       "mcp_prompt_poisoning",
+      "mcp_resource_poisoning",
+      "mcp_tool_annotation_spoofing",
       "plugin_manifest_spoofing",
       "tool_permission_escalation"
     ]

@@ -4,6 +4,7 @@ import type {
   McpInitializeResult,
   McpPromptDescriptor,
   McpResourceDescriptor,
+  McpResourceTemplateDescriptor,
   McpToolDescriptor,
 } from "./types.js";
 
@@ -107,6 +108,18 @@ export class McpSession {
       { timeoutMs: this.config.target.mcp?.sessionTimeoutMs ?? 10_000 },
     );
     return result.resources ?? [];
+  }
+
+  async listResourceTemplates(): Promise<McpResourceTemplateDescriptor[]> {
+    await this.initialize();
+    const result = await this.transport.request<{
+      resourceTemplates?: McpResourceTemplateDescriptor[];
+    }>(
+      "resources/templates/list",
+      {},
+      { timeoutMs: this.config.target.mcp?.sessionTimeoutMs ?? 10_000 },
+    );
+    return result.resourceTemplates ?? [];
   }
 
   async readResource(uri: string): Promise<unknown> {

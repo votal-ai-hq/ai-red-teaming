@@ -29,7 +29,7 @@ export type ToolRisk = "read" | "write";
  * Tools whose NAME implies a consequential / state-changing / outbound action.
  * A heuristic default; a scenario can override per-tool via `writeTools`.
  */
-const WRITE_TOOL_PATTERN =
+export const WRITE_TOOL_PATTERN =
   /(send|deliver|email|message|notify|post|publish|delete|remove|drop|write|create|insert|update|modify|patch|put|edit|fix|exec|execute|run|install|deploy|pay|transfer|grant|revoke|approve|upload|push|merge|share)/i;
 
 export function classifyToolRisk(

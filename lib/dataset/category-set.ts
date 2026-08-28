@@ -31,6 +31,8 @@ const MCP_CATEGORY_POOL: AttackCategory[] = [
   "mcp_server_compromise",
   "mcp_tool_poisoning",
   "mcp_prompt_poisoning",
+  "mcp_resource_poisoning",
+  "mcp_tool_annotation_spoofing",
   "plugin_manifest_spoofing",
   "sdk_dependency_attack",
   "debug_access",

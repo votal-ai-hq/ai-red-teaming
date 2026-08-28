@@ -4,6 +4,7 @@ interface McpSurfaceSnapshot {
   tools: string[];
   prompts: string[];
   resources: string[];
+  resourceTemplates: string[];
 }
 
 function unique(values: string[]): string[] {
@@ -22,7 +23,7 @@ function parseSurfaceList(knownWeaknesses: string[], prefix: string): string[] {
 
 export function getMcpSurface(analysis?: CodebaseAnalysis): McpSurfaceSnapshot {
   if (!analysis) {
-    return { tools: [], prompts: [], resources: [] };
+    return { tools: [], prompts: [], resources: [], resourceTemplates: [] };
   }
 
   return {
@@ -34,6 +35,13 @@ export function getMcpSurface(analysis?: CodebaseAnalysis): McpSurfaceSnapshot {
     resources: unique(
       analysis.mcpSurface?.resources ??
         parseSurfaceList(analysis.knownWeaknesses, "MCP resources exposed: "),
+    ),
+    resourceTemplates: unique(
+      analysis.mcpSurface?.resourceTemplates ??
+        parseSurfaceList(
+          analysis.knownWeaknesses,
+          "MCP resource templates exposed: ",
+        ),
     ),
   };
 }

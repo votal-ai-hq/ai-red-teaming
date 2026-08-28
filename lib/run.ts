@@ -194,6 +194,8 @@ import { mcpDebugAccessModule } from "../attacks-mcp/mcp-debug-access.js";
 import { mcpToolShadowingModule } from "../attacks-mcp/mcp-tool-shadowing.js";
 import { mcpToolPoisoningModule } from "../attacks-mcp/mcp-tool-poisoning.js";
 import { mcpPromptPoisoningModule } from "../attacks-mcp/mcp-prompt-poisoning.js";
+import { mcpResourcePoisoningModule } from "../attacks-mcp/mcp-resource-poisoning.js";
+import { mcpToolAnnotationSpoofingModule } from "../attacks-mcp/mcp-tool-annotation-spoofing.js";
 import { mcpInsecureOutputModule } from "../attacks-mcp/mcp-insecure-output.js";
 import { mcpAuthAudienceModule } from "../attacks-mcp/mcp-auth-audience.js";
 import { mcpRugPullModule } from "../attacks-mcp/mcp-rug-pull.js";
@@ -396,6 +398,8 @@ export const MCP_MODULES: AttackModule[] = [
   mcpToolShadowingModule,
   mcpToolPoisoningModule,
   mcpPromptPoisoningModule,
+  mcpResourcePoisoningModule,
+  mcpToolAnnotationSpoofingModule,
   mcpInsecureOutputModule,
   mcpAuthAudienceModule,
   mcpRugPullModule,
@@ -487,6 +491,7 @@ export async function enrichAnalysisWithTargetSurface(
       capabilities: [...(surface.capabilities ?? [])],
       prompts: [...(surface.prompts ?? [])],
       resources: [...(surface.resources ?? [])],
+      resourceTemplates: [...(surface.resourceTemplates ?? [])],
     };
 
     const notes: string[] = [];
@@ -500,6 +505,10 @@ export async function enrichAnalysisWithTargetSurface(
       notes.push(`MCP prompts exposed: ${surface.prompts.join(", ")}`);
     if (surface.resources?.length)
       notes.push(`MCP resources exposed: ${surface.resources.join(", ")}`);
+    if (surface.resourceTemplates?.length)
+      notes.push(
+        `MCP resource templates exposed: ${surface.resourceTemplates.join(", ")}`,
+      );
 
     for (const note of notes) {
       if (!analysis.knownWeaknesses.includes(note)) {

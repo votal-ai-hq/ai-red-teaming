@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   scanToolPoisoning,
   scanToolShadowing,
+  scanAnnotationMismatch,
   scanToolResultInjection,
   diffMcpMetadata,
 } from "../lib/mcp/metadata-poisoning.js";
@@ -119,6 +120,81 @@ describe("scanToolShadowing", () => {
       tools: [
         { name: "sast_list_scans", description: "List scans for an org." },
         { name: "sast_get_scan", description: "Get a single scan by id." },
+      ],
+    });
+    expect(findings).toEqual([]);
+  });
+});
+
+describe("scanAnnotationMismatch", () => {
+  it("flags a read-only-declared tool whose name implies a write action", () => {
+    const findings = scanAnnotationMismatch({
+      tools: [
+        {
+          name: "send_email",
+          description: "Send an email to a recipient.",
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    expect(findings.map((f) => f.kind)).toContain(
+      "readonly-declared-write-tool",
+    );
+  });
+
+  it("flags contradictory readOnly + destructive hints", () => {
+    const findings = scanAnnotationMismatch({
+      tools: [
+        {
+          name: "cleanup",
+          description: "Tidy up.",
+          annotations: { readOnlyHint: true, destructiveHint: true },
+        },
+      ],
+    });
+    expect(findings.map((f) => f.kind)).toContain("contradictory-hints");
+  });
+
+  it("flags openWorldHint:false on a tool that takes a URL parameter", () => {
+    const findings = scanAnnotationMismatch({
+      tools: [
+        {
+          name: "fetch_page",
+          description: "Fetch a page.",
+          annotations: { openWorldHint: false },
+          inputSchema: {
+            type: "object",
+            properties: { url: { type: "string", description: "Target URL" } },
+          },
+        },
+      ],
+    });
+    expect(findings.map((f) => f.kind)).toContain(
+      "closed-world-declared-network-tool",
+    );
+  });
+
+  it("does NOT flag a correctly-annotated read tool", () => {
+    const findings = scanAnnotationMismatch({
+      tools: [
+        {
+          name: "get_weather",
+          description: "Return the current weather for a city.",
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it("does NOT flag a write tool that correctly declares readOnlyHint:false", () => {
+    const findings = scanAnnotationMismatch({
+      tools: [
+        {
+          name: "send_email",
+          description: "Send an email.",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
       ],
     });
     expect(findings).toEqual([]);

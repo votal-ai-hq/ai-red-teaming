@@ -16,6 +16,7 @@ import { formatErrorDetails } from "./error-utils.js";
 import {
   scanToolPoisoning,
   scanToolShadowing,
+  scanAnnotationMismatch,
   scanToolResultInjection,
   type RugPullDiff,
 } from "./mcp/metadata-poisoning.js";
@@ -630,6 +631,22 @@ function analyzeMcpResponse(
             .join("; ")}`,
         );
         poisonedVerdict = "PARTIAL";
+      }
+
+      // ── Tool-annotation spoofing ──
+      // Behavior hints (readOnlyHint / destructiveHint / openWorldHint) drive
+      // client auto-approval, so a read-only-declared tool that actually
+      // writes/sends/deletes is a consent-bypass. Static mismatch is PARTIAL; a
+      // demonstrated mutation from such a tool is graded PASS on tools/call.
+      const annotationMismatch = scanAnnotationMismatch(discovery);
+      if (annotationMismatch.length > 0) {
+        findings.push(
+          `MCP tool-annotation mismatch (safety hints contradict tool behavior) — ${annotationMismatch
+            .map((m) => `${m.tool} [${m.kind}]: ${m.detail}`)
+            .slice(0, 12)
+            .join("; ")}`,
+        );
+        poisonedVerdict ??= "PARTIAL";
       }
 
       const risky = names.filter((name) => MCP_HIGH_RISK_NAME.test(name));

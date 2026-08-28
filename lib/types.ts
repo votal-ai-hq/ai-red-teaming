@@ -160,7 +160,9 @@ export type AttackCategory =
   | "multi_turn_privilege_escalation"
   | "staged_exfiltration"
   | "mcp_tool_poisoning"
-  | "mcp_prompt_poisoning";
+  | "mcp_prompt_poisoning"
+  | "mcp_resource_poisoning"
+  | "mcp_tool_annotation_spoofing";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -321,6 +323,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "staged_exfiltration",
   "mcp_tool_poisoning",
   "mcp_prompt_poisoning",
+  "mcp_resource_poisoning",
+  "mcp_tool_annotation_spoofing",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);
@@ -701,6 +705,8 @@ export interface CodebaseAnalysis {
     capabilities: string[];
     prompts: string[];
     resources: string[];
+    /** RFC 6570 `uriTemplate` strings from `resources/templates/list`. */
+    resourceTemplates?: string[];
   };
   /** Maps attack categories to the target source files they affect. */
   affectedFiles?: Partial<Record<AttackCategory, AffectedFile[]>>;

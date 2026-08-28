@@ -93,6 +93,7 @@ export interface TargetSurfaceSummary {
   tools?: string[];
   prompts?: string[];
   resources?: string[];
+  resourceTemplates?: string[];
 }
 
 export interface TargetAdapter {
@@ -364,6 +365,9 @@ class McpTargetAdapter implements TargetAdapter {
       tools: (result.tools || []).map((tool) => tool.name),
       prompts: (result.prompts || []).map((prompt) => prompt.name),
       resources: (result.resources || []).map((resource) => resource.uri),
+      resourceTemplates: (result.resourceTemplates || []).map(
+        (template) => template.uriTemplate,
+      ),
     };
   }
 }

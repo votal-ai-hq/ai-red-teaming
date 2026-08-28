@@ -53,6 +53,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "guardrail_mode_confusion",
       "mcp_tool_poisoning",
       "mcp_prompt_poisoning",
+      "mcp_resource_poisoning",
     ],
   },
   {
@@ -152,6 +153,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "inter_agent_protocol_abuse",
       "retrieval_tenant_bleed",
       "audit_log_evasion",
+      "mcp_tool_annotation_spoofing",
     ],
   },
   {
@@ -258,6 +260,8 @@ export const OWASP_AGENTIC_TOP_10: ComplianceItem[] = [
       "mcp_tool_namespace_collision",
       "tool_result_injection",
       "tool_argument_injection",
+      "mcp_resource_poisoning",
+      "mcp_tool_annotation_spoofing",
     ],
   },
   {

@@ -9,6 +9,8 @@ import { mcpCrossTenantAccessModule } from "../attacks-mcp/mcp-cross-tenant-acce
 import { mcpDebugAccessModule } from "../attacks-mcp/mcp-debug-access.js";
 import { mcpToolPoisoningModule } from "../attacks-mcp/mcp-tool-poisoning.js";
 import { mcpPromptPoisoningModule } from "../attacks-mcp/mcp-prompt-poisoning.js";
+import { mcpResourcePoisoningModule } from "../attacks-mcp/mcp-resource-poisoning.js";
+import { mcpToolAnnotationSpoofingModule } from "../attacks-mcp/mcp-tool-annotation-spoofing.js";
 
 const MCP_MODULES: AttackModule[] = [
   mcpToolMisuseModule,
@@ -20,6 +22,8 @@ const MCP_MODULES: AttackModule[] = [
   mcpDebugAccessModule,
   mcpToolPoisoningModule,
   mcpPromptPoisoningModule,
+  mcpResourcePoisoningModule,
+  mcpToolAnnotationSpoofingModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {
