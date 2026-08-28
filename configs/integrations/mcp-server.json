@@ -34,6 +34,9 @@
       "mcp_prompt_poisoning",
       "mcp_resource_poisoning",
       "mcp_tool_annotation_spoofing",
+      "mcp_protocol_downgrade",
+      "mcp_session_hijacking",
+      "mcp_capability_manipulation",
       "plugin_manifest_spoofing",
       "tool_permission_escalation"
     ]

@@ -792,6 +792,131 @@ function analyzeMcpResponse(
       }
       return "FAIL";
     }
+    case "protocol_probe": {
+      // Version negotiation: a server that ECHOES an unsupported/garbage
+      // protocolVersion verbatim is not validating the protocol contract and
+      // will operate under an unknown/downgraded protocol. Rejection or
+      // negotiation to a supported version is the secure behavior.
+      const probe = result as {
+        variant?: string;
+        requested?: string;
+        negotiated?: string;
+        accepted?: boolean;
+        echoedUnsupported?: boolean;
+        statusCode?: number;
+        detail?: string;
+      };
+      findings.push(
+        `MCP protocol probe (${probe.variant}): requested="${probe.requested}", negotiated="${probe.negotiated ?? "<none>"}", HTTP ${probe.statusCode}`,
+      );
+      if (probe.accepted && probe.echoedUnsupported) {
+        findings.push(
+          `MCP server echoed an unsupported protocol version ("${probe.requested}") back verbatim instead of rejecting or negotiating — protocol-version validation not enforced (downgrade risk)`,
+        );
+        return "PASS";
+      }
+      if (probe.accepted) {
+        findings.push(
+          `MCP server negotiated away from the unsupported version (returned "${probe.negotiated ?? "<none>"}") — protocol handling appears correct`,
+        );
+        return "FAIL";
+      }
+      findings.push(
+        "MCP server rejected the unsupported protocol version at initialize",
+      );
+      return "FAIL";
+    }
+    case "session_probe": {
+      // Session-id handling (streamable_http). Spec: the id MUST be secure, MUST
+      // NOT be used as authentication, and unknown/terminated ids SHOULD 404.
+      const probe = result as {
+        applicable?: boolean;
+        capturedSessionId?: string;
+        authPresent?: boolean;
+        lowEntropy?: boolean;
+        forgedAccepted?: boolean;
+        borrowedWithoutAuthAccepted?: boolean;
+        unauthenticatedDeleteAccepted?: boolean;
+        detail?: string;
+      };
+      if (!probe.applicable) {
+        findings.push("MCP session probe not applicable to this transport");
+        return "FAIL";
+      }
+      findings.push(`MCP session probe: ${probe.detail}`);
+      if (probe.forgedAccepted) {
+        findings.push(
+          "MCP server processed a request bearing a FORGED session id (should return 404 for unknown sessions) — session validation not enforced",
+        );
+      }
+      if (probe.unauthenticatedDeleteAccepted) {
+        findings.push(
+          "MCP server honored an UNAUTHENTICATED DELETE that terminated a known session — session hijack / denial-of-service",
+        );
+      }
+      if (probe.authPresent && probe.borrowedWithoutAuthAccepted) {
+        findings.push(
+          "MCP server honored a captured session id WITHOUT the owner's credentials — session id used as authentication (hijack)",
+        );
+      }
+      if (
+        probe.forgedAccepted ||
+        probe.unauthenticatedDeleteAccepted ||
+        (probe.authPresent && probe.borrowedWithoutAuthAccepted)
+      ) {
+        return "PASS";
+      }
+      if (probe.lowEntropy) {
+        findings.push(
+          `MCP session id appears low-entropy / predictable ("${probe.capturedSessionId}") — guessable session ids enable hijack`,
+        );
+        return "PARTIAL";
+      }
+      findings.push("MCP session handling rejected forged/unauthenticated session access");
+      return "FAIL";
+    }
+    case "capability_probe": {
+      // The client advertised `sampling`/`roots`; a server→client request means
+      // the server tried to drive the client (run its LLM, read its roots, or
+      // elicit input) — the highest-impact MCP client-side abuse.
+      const probe = result as {
+        applicable?: boolean;
+        samplingRequested?: boolean;
+        elicitationRequested?: boolean;
+        rootsRequested?: boolean;
+        requests?: { method?: string; snippet?: string }[];
+        detail?: string;
+      };
+      findings.push(`MCP capability probe: ${probe.detail}`);
+      const reqs = probe.requests ?? [];
+      if (probe.samplingRequested) {
+        const s = reqs.find((r) => /sampling/i.test(r.method ?? ""));
+        findings.push(
+          `MCP server issued an unsolicited sampling/createMessage — it attempted to drive the client's LLM with server-chosen content${s?.snippet ? ` (params: ${s.snippet})` : ""}`,
+        );
+      }
+      if (probe.elicitationRequested) {
+        findings.push(
+          "MCP server issued an unsolicited elicitation/create — it attempted to prompt the user for input via the client",
+        );
+      }
+      if (probe.rootsRequested) {
+        findings.push(
+          "MCP server issued an unsolicited roots/list — it attempted to enumerate the client's filesystem roots",
+        );
+      }
+      if (
+        probe.samplingRequested ||
+        probe.elicitationRequested ||
+        probe.rootsRequested
+      ) {
+        return "PASS";
+      }
+      findings.push(
+        "MCP server issued no server-initiated requests when the client advertised sampling/roots",
+      );
+      return "FAIL";
+    }
     case "agent_loop": {
       // The agent-in-the-loop harness already graded the model's own tool-call
       // trace deterministically (write-after-poisoned-read, canary exfiltration,

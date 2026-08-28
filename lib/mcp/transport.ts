@@ -25,6 +25,8 @@ export interface McpTransport {
   close(): Promise<void>;
   getRecentStderr(): string;
   getTranscript(): McpTraceEvent[];
+  /** Server-assigned session id (streamable_http). Undefined for stdio. */
+  getSessionId(): string | undefined;
 }
 
 export function createMcpTransport(config: Config): McpTransport {
@@ -188,6 +190,10 @@ export class McpStdioTransport implements McpTransport {
     return this.stderrBuffer.join("");
   }
 
+  getSessionId(): string | undefined {
+    return undefined;
+  }
+
   getTranscript(): McpTraceEvent[] {
     return this.transcript.map((event) => ({
       ...event,
@@ -220,7 +226,16 @@ export class McpStdioTransport implements McpTransport {
     }
 
     const pending = this.pending.get(message.id);
-    if (!pending) return;
+    if (!pending) {
+      // A numeric id with a `method` and no pending entry is a server→client
+      // REQUEST (e.g. sampling/createMessage). We record it above as evidence
+      // and reply with a canned refusal so the server does not hang — we never
+      // actually run the requested LLM sampling / elicitation.
+      if (typeof message.method === "string") {
+        this.respondToServerRequest(message.id);
+      }
+      return;
+    }
     this.pending.delete(message.id);
     if (pending.timeout) {
       clearTimeout(pending.timeout);
@@ -244,6 +259,23 @@ export class McpStdioTransport implements McpTransport {
       pending.reject(error);
       this.pending.delete(id);
     }
+  }
+
+  /** Refuse a server→client request (e.g. sampling/createMessage) without
+   *  running it, so the server proceeds while we record the attempt. */
+  private respondToServerRequest(id: number): void {
+    if (!this.child) return;
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: "client does not fulfill server-initiated requests" },
+    });
+    this.transcript.push({
+      direction: "client->server",
+      method: "response",
+      payload: JSON.parse(payload),
+    });
+    this.child.stdin.write(`${payload}\n`, () => {});
   }
 }
 
@@ -360,6 +392,10 @@ export class McpStreamableHttpTransport implements McpTransport {
 
   getRecentStderr(): string {
     return "";
+  }
+
+  getSessionId(): string | undefined {
+    return this.sessionId;
   }
 
   getTranscript(): McpTraceEvent[] {

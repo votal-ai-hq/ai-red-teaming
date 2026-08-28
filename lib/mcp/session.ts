@@ -29,8 +29,9 @@ export class McpSession {
     const result = await this.transport.request<McpInitializeResult>(
       "initialize",
       {
-        protocolVersion: DEFAULT_PROTOCOL_VERSION,
-        capabilities: {},
+        protocolVersion:
+          this.config.target.mcp?.protocolVersion ?? DEFAULT_PROTOCOL_VERSION,
+        capabilities: this.config.target.mcp?.clientCapabilities ?? {},
         clientInfo: {
           name: "wb-red-team",
           version: "phase-2",
@@ -137,6 +138,10 @@ export class McpSession {
 
   getRecentStderr(): string {
     return this.transport.getRecentStderr();
+  }
+
+  getSessionId(): string | undefined {
+    return this.transport.getSessionId();
   }
 
   getExecutionTrace(operation?: string): McpExecutionTrace {

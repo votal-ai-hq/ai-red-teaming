@@ -216,6 +216,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "divergent_repetition",
       "context_window_attack",
       "streaming_voice_injection",
+      "mcp_capability_manipulation",
     ],
   },
 ];
@@ -262,6 +263,7 @@ export const OWASP_AGENTIC_TOP_10: ComplianceItem[] = [
       "tool_argument_injection",
       "mcp_resource_poisoning",
       "mcp_tool_annotation_spoofing",
+      "mcp_capability_manipulation",
     ],
   },
   {
@@ -279,6 +281,8 @@ export const OWASP_AGENTIC_TOP_10: ComplianceItem[] = [
       "inter_agent_protocol_abuse",
       "retrieval_tenant_bleed",
       "multi_turn_privilege_escalation",
+      "mcp_protocol_downgrade",
+      "mcp_session_hijacking",
     ],
   },
   {

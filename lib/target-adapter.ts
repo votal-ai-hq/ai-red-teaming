@@ -12,6 +12,12 @@ import {
   type AuthVariant,
   type AuthProbeResult,
 } from "./mcp/auth-probe.js";
+import { type ProtocolProbeResult } from "./mcp/protocol-probe.js";
+import { runSessionProbe } from "./mcp/session-probe.js";
+import {
+  scanServerInitiatedRequests,
+  summarizeCapabilityProbe,
+} from "./mcp/capability-probe.js";
 import { diffMcpMetadata } from "./mcp/metadata-poisoning.js";
 
 /**
@@ -128,7 +134,7 @@ class McpTargetAdapter implements TargetAdapter {
         statusCode: 400,
         body: {
           error:
-            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop", "auth_probe", "rug_pull_probe")',
+            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", "resources/read", "prompts/get", "agent_loop", "auth_probe", "rug_pull_probe", "protocol_probe", "session_probe", "capability_probe")',
         },
         timeMs: Date.now() - start,
       };
@@ -278,6 +284,110 @@ class McpTargetAdapter implements TargetAdapter {
           } finally {
             await probeSession.close();
           }
+          break;
+        }
+        case "protocol_probe": {
+          // Advertise an unsupported / garbage protocolVersion at initialize in
+          // a short-lived session and observe whether the server rejects it,
+          // negotiates away from it, or echoes it back verbatim (downgrade).
+          const requested =
+            (attack.payload._protocolVersion as string | undefined) ??
+            "not-a-version";
+          const mcp = config.target.mcp;
+          if (!mcp) {
+            return {
+              statusCode: 400,
+              body: { error: "protocol_probe requires an MCP target" },
+              timeMs: Date.now() - start,
+            };
+          }
+          const probeConfig: Config = {
+            ...config,
+            target: {
+              ...config.target,
+              mcp: { ...mcp, protocolVersion: requested },
+            },
+          };
+          const probeSession = new McpSession(probeConfig);
+          try {
+            const init = await probeSession.initialize();
+            const negotiated = init.protocolVersion;
+            result = {
+              variant: String(
+                (attack.payload._protocolVariant as string | undefined) ??
+                  "custom",
+              ),
+              requested,
+              negotiated,
+              accepted: true,
+              echoedUnsupported: negotiated === requested,
+              statusCode: 200,
+              detail: `server accepted initialize; negotiated protocolVersion="${negotiated ?? "<none>"}"`,
+            } satisfies ProtocolProbeResult;
+          } catch (probeErr) {
+            const msg = (probeErr as Error)?.message ?? "";
+            result = {
+              variant: String(
+                (attack.payload._protocolVariant as string | undefined) ??
+                  "custom",
+              ),
+              requested,
+              accepted: false,
+              echoedUnsupported: false,
+              statusCode: parseHttpStatus(msg),
+              detail: msg.slice(0, 200),
+            } satisfies ProtocolProbeResult;
+          } finally {
+            await probeSession.close();
+          }
+          break;
+        }
+        case "session_probe": {
+          // Streamable-HTTP session-id handling: forged-id acceptance, borrowed
+          // session without auth, unauthenticated DELETE, low entropy. Runs its
+          // own raw HTTP calls; never touches the outer `session`.
+          result = await runSessionProbe(config);
+          break;
+        }
+        case "capability_probe": {
+          // Advertise `sampling` + `roots` at initialize, then give the server a
+          // chance to issue a server→client request (sampling/createMessage,
+          // elicitation/create, roots/list). The transport records — and refuses
+          // — any such request; we scan the transcript for evidence. We never run
+          // the requested sampling.
+          const mcp = config.target.mcp;
+          if (!mcp) {
+            return {
+              statusCode: 400,
+              body: { error: "capability_probe requires an MCP target" },
+              timeMs: Date.now() - start,
+            };
+          }
+          const probeConfig: Config = {
+            ...config,
+            target: {
+              ...config.target,
+              mcp: {
+                ...mcp,
+                clientCapabilities: {
+                  ...(mcp.clientCapabilities ?? {}),
+                  sampling: {},
+                  roots: { listChanged: true },
+                },
+              },
+            },
+          };
+          session = new McpSession(probeConfig);
+          await session.initialize();
+          // Provoke server activity: enumerate, then best-effort call the first
+          // tool — a common trigger for a server that wants to sample.
+          const provoke = await session.listTools().catch(() => []);
+          if (provoke[0]?.name) {
+            await session.callTool(provoke[0].name, {}).catch(() => undefined);
+          }
+          const transcript = session.getExecutionTrace("capability_probe").transcript;
+          const requests = scanServerInitiatedRequests(transcript);
+          result = summarizeCapabilityProbe(true, requests);
           break;
         }
         case "agent_loop": {

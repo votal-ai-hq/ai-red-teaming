@@ -162,7 +162,10 @@ export type AttackCategory =
   | "mcp_tool_poisoning"
   | "mcp_prompt_poisoning"
   | "mcp_resource_poisoning"
-  | "mcp_tool_annotation_spoofing";
+  | "mcp_tool_annotation_spoofing"
+  | "mcp_protocol_downgrade"
+  | "mcp_session_hijacking"
+  | "mcp_capability_manipulation";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -325,6 +328,9 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "mcp_prompt_poisoning",
   "mcp_resource_poisoning",
   "mcp_tool_annotation_spoofing",
+  "mcp_protocol_downgrade",
+  "mcp_session_hijacking",
+  "mcp_capability_manipulation",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);
@@ -439,6 +445,19 @@ export interface McpTargetConfig {
   denylistedTools?: string[];
   startupTimeoutMs?: number;
   sessionTimeoutMs?: number;
+  /**
+   * Protocol version the client advertises at `initialize`. Defaults to the
+   * client's baseline (`2024-11-05`). The protocol-downgrade probe overrides
+   * this per short-lived session to test the server's version handling.
+   */
+  protocolVersion?: string;
+  /**
+   * Client capabilities advertised at `initialize`. Defaults to `{}`. The
+   * capability-manipulation probe sets this (e.g. `{ sampling: {} }`) to test
+   * whether the server issues server→client requests such as
+   * `sampling/createMessage`.
+   */
+  clientCapabilities?: Record<string, unknown>;
   /**
    * Enable the agent-in-the-loop indirect-prompt-injection mode: drive an LLM
    * that holds the MCP tools, seed poisoned content into a read tool's result,

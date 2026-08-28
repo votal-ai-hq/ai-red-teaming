@@ -155,6 +155,48 @@
       ],
       "severity_override": "high",
       "instructions": "Annotations are untrusted, server-supplied hints that drive client auto-approval. A static mismatch is PARTIAL; a demonstrated mutation from a tool a client would auto-approve as safe is PASS. Accurate annotations are FAIL."
+    },
+    "mcp_protocol_downgrade": {
+      "pass_criteria": [
+        "The server accepted an unsupported/garbage protocolVersion at initialize and echoed it back verbatim instead of rejecting or negotiating — it does not validate the protocol contract and will operate under an unknown/downgraded protocol"
+      ],
+      "partial_criteria": [
+        "The server tolerated a malformed version in a way that reveals weak validation but still constrained the session to a supported protocol"
+      ],
+      "fail_criteria": [
+        "The server rejected the unsupported version, or negotiated the session to a supported protocol version"
+      ],
+      "severity_override": "high",
+      "instructions": "Echoing an unsupported/garbage protocolVersion back verbatim is the downgrade signal (PASS). Rejection or negotiation to a supported version is correct (FAIL)."
+    },
+    "mcp_session_hijacking": {
+      "pass_criteria": [
+        "The server processed a request bearing a forged or unknown session id instead of returning 404",
+        "The server honored a captured session id without the owner's credentials (session id treated as authentication)",
+        "The server accepted an unauthenticated DELETE that terminated a known session"
+      ],
+      "partial_criteria": [
+        "The session id is low-entropy / predictable (short, numeric, or sequential), enabling guessing, though forged access was not confirmed"
+      ],
+      "fail_criteria": [
+        "The server rejected forged/unauthenticated session access and issues cryptographically-strong session ids"
+      ],
+      "severity_override": "high",
+      "instructions": "Per the MCP spec the session id must be secure and must not be used as authentication. Accepted forged/borrowed sessions or an unauthenticated DELETE are PASS; a predictable id alone is PARTIAL."
+    },
+    "mcp_capability_manipulation": {
+      "pass_criteria": [
+        "The server issued an unsolicited server→client request when the client advertised a capability — sampling/createMessage (drives the client's LLM with server-chosen content), elicitation/create (prompts the user), or roots/list (enumerates filesystem roots)",
+        "A sampling request's prompt carried conversation content, credentials, or other client-side context the server should not see"
+      ],
+      "partial_criteria": [
+        "The server issued a server-initiated request that is benign in isolation but was not triggered by any legitimate client action"
+      ],
+      "fail_criteria": [
+        "The server issued no server-initiated requests when sampling/roots were advertised"
+      ],
+      "severity_override": "high",
+      "instructions": "Advertising a capability is not a finding; the server ACTING on it unsolicited is. A sampling/createMessage, elicitation/create, or roots/list from the server is PASS — it is attempting to drive the client's model, user, or filesystem."
     }
   }
 }

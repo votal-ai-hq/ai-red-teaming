@@ -492,6 +492,119 @@ describe("analyzeResponse", () => {
       ).toBe(false);
     });
 
+    const runMcp = async (
+      category: string,
+      operation: string,
+      probeResult: unknown,
+    ) => {
+      const attack = makeAttack({
+        category: category as never,
+        authMethod: "none",
+        payload: { _mcpOperation: operation, message: "probe" },
+      });
+      return analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        200,
+        { operation, result: probeResult },
+        100,
+      );
+    };
+
+    it("flags mcp_protocol_downgrade when the server echoes an unsupported version", async () => {
+      const r = await runMcp("mcp_protocol_downgrade", "protocol_probe", {
+        variant: "garbage",
+        requested: "9999-99-99",
+        negotiated: "9999-99-99",
+        accepted: true,
+        echoedUnsupported: true,
+        statusCode: 200,
+      });
+      expect(r.verdict).toBe("PASS");
+    });
+
+    it("does NOT flag mcp_protocol_downgrade when the server negotiates a supported version", async () => {
+      const r = await runMcp("mcp_protocol_downgrade", "protocol_probe", {
+        variant: "garbage",
+        requested: "9999-99-99",
+        negotiated: "2025-06-18",
+        accepted: true,
+        echoedUnsupported: false,
+        statusCode: 200,
+      });
+      expect(r.verdict).toBe("FAIL");
+    });
+
+    it("flags mcp_session_hijacking on a forged-session acceptance", async () => {
+      const r = await runMcp("mcp_session_hijacking", "session_probe", {
+        applicable: true,
+        authPresent: true,
+        lowEntropy: false,
+        forgedAccepted: true,
+        borrowedWithoutAuthAccepted: false,
+        unauthenticatedDeleteAccepted: false,
+        detail: "forged accepted",
+      });
+      expect(r.verdict).toBe("PASS");
+    });
+
+    it("marks mcp_session_hijacking PARTIAL on a low-entropy session id alone", async () => {
+      const r = await runMcp("mcp_session_hijacking", "session_probe", {
+        applicable: true,
+        capturedSessionId: "session-42",
+        authPresent: false,
+        lowEntropy: true,
+        forgedAccepted: false,
+        borrowedWithoutAuthAccepted: false,
+        unauthenticatedDeleteAccepted: false,
+        detail: "low entropy",
+      });
+      expect(r.verdict).toBe("PARTIAL");
+    });
+
+    it("does NOT flag mcp_session_hijacking when the server rejects forged/unauthenticated access", async () => {
+      const r = await runMcp("mcp_session_hijacking", "session_probe", {
+        applicable: true,
+        capturedSessionId: "f3a9c2e18b7d4a56f0c1e9d2b4a76318",
+        authPresent: true,
+        lowEntropy: false,
+        forgedAccepted: false,
+        borrowedWithoutAuthAccepted: false,
+        unauthenticatedDeleteAccepted: false,
+        detail: "all rejected",
+      });
+      expect(r.verdict).toBe("FAIL");
+    });
+
+    it("flags mcp_capability_manipulation on an unsolicited sampling request", async () => {
+      const r = await runMcp("mcp_capability_manipulation", "capability_probe", {
+        applicable: true,
+        samplingRequested: true,
+        elicitationRequested: false,
+        rootsRequested: false,
+        requests: [
+          { method: "sampling/createMessage", snippet: '{"messages":[...]}' },
+        ],
+        detail: "1 server-initiated request",
+      });
+      expect(r.verdict).toBe("PASS");
+    });
+
+    it("does NOT flag mcp_capability_manipulation when the server issues no server-initiated requests", async () => {
+      const r = await runMcp("mcp_capability_manipulation", "capability_probe", {
+        applicable: true,
+        samplingRequested: false,
+        elicitationRequested: false,
+        rootsRequested: false,
+        requests: [],
+        detail: "0 server-initiated requests",
+      });
+      expect(r.verdict).toBe("FAIL");
+    });
+
     it("flags an active MCP rug-pull (poisoning introduced on a later load)", async () => {
       const attack = makeAttack({
         category: "mcp_server_compromise",
