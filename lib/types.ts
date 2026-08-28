@@ -158,7 +158,9 @@ export type AttackCategory =
   | "audit_log_evasion"
   | "provenance_forgery"
   | "multi_turn_privilege_escalation"
-  | "staged_exfiltration";
+  | "staged_exfiltration"
+  | "mcp_tool_poisoning"
+  | "mcp_prompt_poisoning";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -317,6 +319,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "provenance_forgery",
   "multi_turn_privilege_escalation",
   "staged_exfiltration",
+  "mcp_tool_poisoning",
+  "mcp_prompt_poisoning",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);

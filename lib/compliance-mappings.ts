@@ -51,6 +51,8 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "inbox_prompt_injection",
       "repo_prompt_injection",
       "guardrail_mode_confusion",
+      "mcp_tool_poisoning",
+      "mcp_prompt_poisoning",
     ],
   },
   {
@@ -94,6 +96,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "plugin_manifest_spoofing",
       "sdk_dependency_attack",
       "mcp_tool_namespace_collision",
+      "mcp_tool_poisoning",
     ],
   },
   {
@@ -290,6 +293,7 @@ export const OWASP_AGENTIC_TOP_10: ComplianceItem[] = [
       "sdk_dependency_attack",
       "fine_tuning_data_injection",
       "mcp_tool_namespace_collision",
+      "mcp_tool_poisoning",
       "graph_consensus_poisoning",
     ],
   },

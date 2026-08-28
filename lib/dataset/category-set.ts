@@ -29,6 +29,8 @@ const MCP_CATEGORY_POOL: AttackCategory[] = [
   "cross_session_injection",
   "indirect_prompt_injection",
   "mcp_server_compromise",
+  "mcp_tool_poisoning",
+  "mcp_prompt_poisoning",
   "plugin_manifest_spoofing",
   "sdk_dependency_attack",
   "debug_access",

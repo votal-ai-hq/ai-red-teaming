@@ -144,6 +144,8 @@ const SEVERITY_WEIGHTS: Record<AttackCategory, number> = {
   graph_consensus_poisoning: 14,
   inter_agent_protocol_abuse: 15,
   mcp_tool_namespace_collision: 14,
+  mcp_tool_poisoning: 15,
+  mcp_prompt_poisoning: 15,
   computer_use_injection: 14,
   streaming_voice_injection: 13,
   cross_modal_conflict: 12,

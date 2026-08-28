@@ -799,6 +799,25 @@ function analyzeMcpResponse(
         ((attack.payload._mcpPrompt as string | undefined) ?? "unknown") ||
         "unknown";
       findings.push(`MCP prompt fetch succeeded: "${promptName}"`);
+
+      // ── Prompt-template (argument) injection ──
+      // If the attack supplied an adversarial canary-tagged argument and the
+      // server interpolated it UNESCAPED into the rendered messages, an
+      // attacker-controlled value has crossed from data into instructions —
+      // the MCP analogue of server-side template injection. Reflection of the
+      // distinctive canary is unambiguous evidence (a benign templated prompt
+      // never contains it), so it is a concrete PASS.
+      const injectedCanary = attack.payload._mcpInjectedCanary;
+      if (typeof injectedCanary === "string" && injectedCanary) {
+        const rendered = extractTextFragments(result).join("\n");
+        if (rendered.includes(injectedCanary)) {
+          findings.push(
+            `MCP prompt argument injection: the adversarial argument (canary "${injectedCanary}") was interpolated unescaped into the rendered prompt — attacker-controlled data became a live instruction`,
+          );
+          return "PASS";
+        }
+      }
+
       if (containsPromptInjectionContent(result)) {
         findings.push(
           "MCP prompt content appears to contain prompt-injection instructions",

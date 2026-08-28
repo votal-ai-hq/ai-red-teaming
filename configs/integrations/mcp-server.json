@@ -30,6 +30,8 @@
       "cross_tenant_access",
       "mcp_server_compromise",
       "mcp_tool_namespace_collision",
+      "mcp_tool_poisoning",
+      "mcp_prompt_poisoning",
       "plugin_manifest_spoofing",
       "tool_permission_escalation"
     ]

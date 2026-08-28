@@ -7,6 +7,8 @@ import { mcpPathTraversalModule } from "../attacks-mcp/mcp-path-traversal.js";
 import { mcpSsrfModule } from "../attacks-mcp/mcp-ssrf.js";
 import { mcpCrossTenantAccessModule } from "../attacks-mcp/mcp-cross-tenant-access.js";
 import { mcpDebugAccessModule } from "../attacks-mcp/mcp-debug-access.js";
+import { mcpToolPoisoningModule } from "../attacks-mcp/mcp-tool-poisoning.js";
+import { mcpPromptPoisoningModule } from "../attacks-mcp/mcp-prompt-poisoning.js";
 
 const MCP_MODULES: AttackModule[] = [
   mcpToolMisuseModule,
@@ -16,6 +18,8 @@ const MCP_MODULES: AttackModule[] = [
   mcpSsrfModule,
   mcpCrossTenantAccessModule,
   mcpDebugAccessModule,
+  mcpToolPoisoningModule,
+  mcpPromptPoisoningModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {
