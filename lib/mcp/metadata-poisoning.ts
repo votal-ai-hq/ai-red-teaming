@@ -64,6 +64,15 @@ const STANDARD_SCHEMA_KEYS = new Set([
   "additionalProperties", "anyOf", "allOf", "oneOf", "$ref", "$schema",
   "examples", "const", "nullable", "definitions", "$defs", "propertyNames",
   "minItems", "maxItems", "uniqueItems", "multipleOf", "not",
+  // Numeric bounds + the rest of the standard validation vocabulary — these are
+  // legitimate schema keywords, not smuggled instructions. Omitting them made
+  // the Full-Schema-Poisoning scan false-positive on any tool with a bounded
+  // number (e.g. `amount_cents` with `exclusiveMinimum: 0`).
+  "exclusiveMinimum", "exclusiveMaximum", "patternProperties", "prefixItems",
+  "contains", "minContains", "maxContains", "if", "then", "else",
+  "dependentRequired", "dependentSchemas", "readOnly", "writeOnly", "deprecated",
+  "contentEncoding", "contentMediaType", "contentSchema", "unevaluatedProperties",
+  "unevaluatedItems", "$id", "$comment", "$anchor",
 ]);
 
 export interface PoisonFinding {
@@ -207,11 +216,13 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Names/descriptions implying a consequential / state-changing / outbound
- *  action. Mirrors WRITE_TOOL_PATTERN in agent-loop.ts; kept local so this
- *  scanner stays dependency-free. */
+/** Tool NAMES implying a consequential / state-changing / outbound action.
+ *  Mirrors WRITE_TOOL_PATTERN in agent-loop.ts (substring match, so it catches
+ *  snake_case names like `create_transfer`), extended with the high-risk
+ *  mutation verbs common in real APIs (freeze, reverse, close, wire, …). Kept
+ *  local so this scanner stays dependency-free. */
 const WRITE_ACTION =
-  /\b(send|deliver|email|message|notify|post|publish|delete|remove|drop|write|create|insert|update|modify|patch|put|edit|exec|execute|run|install|deploy|pay|transfer|grant|revoke|approve|upload|push|merge)\b/i;
+  /(send|deliver|email|message|notify|post|publish|delete|remove|drop|write|create|insert|update|modify|patch|edit|exec|execute|install|deploy|pay|transfer|grant|revoke|approve|upload|push|merge|freeze|unfreeze|reverse|close|adjust|initiate|wire|cancel|refund|charge|withdraw|deposit|disable|enable|reset|terminate|suspend|activate)/i;
 /** Property names that imply an outbound network target (open-world action). */
 const URL_PARAM = /\b(url|uri|endpoint|host|webhook|callback|address|target|link)\b/i;
 
@@ -256,8 +267,10 @@ export function scanAnnotationMismatch(
   for (const tool of discovery.tools ?? []) {
     const name = tool.name ?? "(unnamed)";
     const a = tool.annotations;
-    const looksWrite =
-      WRITE_ACTION.test(name) || WRITE_ACTION.test(tool.description ?? "");
+    // Classify by the tool NAME, which names the operation. Matching the
+    // free-text description over-triggers on nouns ("search by name, email, or
+    // phone" is not a write just because it mentions "email").
+    const looksWrite = WRITE_ACTION.test(name);
 
     if (a?.readOnlyHint === true && looksWrite) {
       findings.push({

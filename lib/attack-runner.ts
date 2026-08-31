@@ -1023,16 +1023,19 @@ export async function executeAdaptiveMultiTurn(
   // `_mcpArguments` and ignores `payload.message`, so a text-only follow-up
   // would replay the identical call. For those targets the adaptive lever is
   // the tool ARGUMENTS instead of the message.
-  const mcpOperation =
-    config.target.type === "mcp" ? mcpOperationOf(attack) : undefined;
+  const isMcpTarget = config.target.type === "mcp";
+  const mcpOperation = isMcpTarget ? mcpOperationOf(attack) : undefined;
   const adaptsMcpArguments =
     mcpOperation !== undefined && ADAPTABLE_MCP_OPERATIONS.has(mcpOperation);
 
   const maxTurns =
-    mcpOperation !== undefined && !adaptsMcpArguments
-      ? // Nothing varies across turns for these operations (`discover`,
-        // `auth_probe`, `rug_pull_probe` are one-shot probes and `agent_loop`
-        // already runs its own multi-step loop), so don't burn turns replaying.
+    isMcpTarget && !adaptsMcpArguments
+      ? // MCP has no chat channel and these ops carry nothing to vary across
+        // turns (`discover`, `auth_probe`, `session_probe`, `protocol_probe`,
+        // `capability_probe`, `rug_pull_probe` are one-shot probes; `agent_loop`
+        // runs its own multi-step loop). Escalating a text conversation here
+        // just produces payloads WITHOUT `_mcpOperation` that the adapter 400s.
+        // Only `tools/call` / `prompts/get` (argument-adaptable) may take turns.
         1
       : Math.min(
           config.attackConfig.maxAdaptiveTurns ?? 15,

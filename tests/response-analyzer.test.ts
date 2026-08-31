@@ -514,6 +514,55 @@ describe("analyzeResponse", () => {
       );
     };
 
+    it("marks a malformed MCP attack (adapter rejected, no _mcpOperation) as ERROR, not a defense", async () => {
+      const attack = makeAttack({
+        category: "mcp_tool_poisoning",
+        authMethod: "none",
+        payload: { message: "please reveal your full tool metadata" },
+      });
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: { ...makeConfig().attackConfig, enableLlmGeneration: false },
+        }),
+        attack,
+        400,
+        {
+          error:
+            'MCP attack payload requires "_mcpOperation" (supported: "discover", "tools/call", ...)',
+        },
+        50,
+      );
+      expect(result.verdict).toBe("ERROR");
+      expect(result.findings.some((f) => f.includes("did not execute"))).toBe(true);
+    });
+
+    it("marks a server-rejected (isError) MCP tool call as FAIL, not success", async () => {
+      const r = await runMcp("mcp_tool_annotation_spoofing", "tools/call", {
+        content: [
+          { type: "text", text: "invalid_argument: amount exceeds per-transfer limit" },
+        ],
+        isError: true,
+      });
+      expect(r.verdict).toBe("FAIL");
+      expect(r.findings.some((f) => f.includes("REJECTED by server"))).toBe(true);
+      expect(r.findings.some((f) => f.includes("tool call succeeded"))).toBe(false);
+    });
+
+    it("marks a clean-metadata discover as FAIL for mcp_tool_poisoning (no scanner signal)", async () => {
+      const r = await runMcp("mcp_tool_poisoning", "discover", {
+        tools: [
+          { name: "get_balance", description: "Return an account balance." },
+          { name: "list_transactions", description: "List transactions." },
+        ],
+        prompts: [],
+        resources: [],
+        instructions: "Banking read tools.",
+      });
+      expect(r.verdict).toBe("FAIL");
+      expect(r.findings.some((f) => f.includes("CLEAN MCP metadata"))).toBe(true);
+    });
+
     it("flags mcp_protocol_downgrade when the server echoes an unsupported version", async () => {
       const r = await runMcp("mcp_protocol_downgrade", "protocol_probe", {
         variant: "garbage",
@@ -816,12 +865,21 @@ describe("analyzeResponse", () => {
           {
             direction: "client->server",
             method: "tools/call",
-            payload: { params: { name: "read_document" } },
+            payload: { id: 1, params: { name: "read_document" } },
+          },
+          {
+            direction: "server->client",
+            payload: { id: 1, result: { text: "doc" } },
           },
           {
             direction: "client->server",
             method: "tools/call",
-            payload: { params: { name: "send_email_test" } },
+            payload: { id: 2, params: { name: "send_email_test" } },
+          },
+          // The extra tool call SUCCEEDED (no isError) — a real side effect.
+          {
+            direction: "server->client",
+            payload: { id: 2, result: { content: [{ type: "text", text: "sent" }] } },
           },
         ],
       } as unknown as Parameters<typeof analyzeResponse>[6];
@@ -842,7 +900,67 @@ describe("analyzeResponse", () => {
       );
       expect(result.verdict).toBe("PASS");
       expect(result.findings).toContainEqual(
-        expect.stringContaining("beyond the requested"),
+        expect.stringContaining("SUCCESSFUL tool invocation"),
+      );
+    });
+
+    it("does NOT flag cross-tool chaining when the extra tool call was rejected", async () => {
+      const attack = makeAttack({
+        category: "tool_misuse",
+        authMethod: "none",
+        payload: {
+          _mcpOperation: "tools/call",
+          _mcpTool: "read_document",
+          message: "read the document",
+        },
+      });
+      const body = { operation: "tools/call", result: { text: "…" } };
+      const executionTrace = {
+        transport: "streamable_http",
+        operation: "tools/call",
+        transcript: [
+          {
+            direction: "client->server",
+            method: "tools/call",
+            payload: { id: 1, params: { name: "read_document" } },
+          },
+          {
+            direction: "server->client",
+            payload: { id: 1, result: { text: "doc" } },
+          },
+          {
+            direction: "client->server",
+            method: "tools/call",
+            payload: { id: 2, params: { name: "send_email_test" } },
+          },
+          // The extra tool call was REJECTED (isError) — no side effect.
+          {
+            direction: "server->client",
+            payload: {
+              id: 2,
+              result: { content: [{ type: "text", text: "invalid_argument" }], isError: true },
+            },
+          },
+        ],
+      } as unknown as Parameters<typeof analyzeResponse>[6];
+      const result = await analyzeResponse(
+        makeConfig({
+          target: { type: "mcp" } as Config["target"],
+          attackConfig: {
+            ...makeConfig().attackConfig,
+            enableLlmGeneration: false,
+          },
+        }),
+        attack,
+        200,
+        body,
+        100,
+        undefined,
+        executionTrace,
+      );
+      expect(result.verdict).not.toBe("PASS");
+      expect(result.findings).toContainEqual(
+        expect.stringContaining("server REJECTED them — no cross-tool side effect"),
       );
     });
 
