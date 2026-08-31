@@ -55,6 +55,8 @@ const MCP_CATEGORY_POOL: AttackCategory[] = [
 const AGENT_CATEGORY_POOL: AttackCategory[] = [
   "prompt_injection",
   "indirect_prompt_injection",
+  "system_prompt_disclosure",
+  "tool_inventory_disclosure",
   "goal_hijack",
   "memory_poisoning",
   "pii_disclosure",

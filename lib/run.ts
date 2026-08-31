@@ -230,6 +230,8 @@ import { auditLogEvasionModule } from "../attacks/audit-log-evasion.js";
 import { provenanceForgeryModule } from "../attacks/provenance-forgery.js";
 import { multiTurnPrivilegeEscalationModule } from "../attacks/multi-turn-privilege-escalation.js";
 import { stagedExfiltrationModule } from "../attacks/staged-exfiltration.js";
+import { systemPromptDisclosureModule } from "../attacks/system-prompt-disclosure.js";
+import { toolInventoryDisclosureModule } from "../attacks/tool-inventory-disclosure.js";
 
 export const ALL_MODULES: AttackModule[] = [
   authBypassModule,
@@ -388,6 +390,8 @@ export const ALL_MODULES: AttackModule[] = [
   provenanceForgeryModule,
   multiTurnPrivilegeEscalationModule,
   stagedExfiltrationModule,
+  systemPromptDisclosureModule,
+  toolInventoryDisclosureModule,
 ];
 
 export const MCP_MODULES: AttackModule[] = [

@@ -48,6 +48,8 @@ import { pluginManifestSpoofingModule } from "../attacks/plugin-manifest-spoofin
 import { sdkDependencyAttackModule } from "../attacks/sdk-dependency-attack.js";
 import { fineTuningDataInjectionModule } from "../attacks/fine-tuning-data-injection.js";
 import { promptTemplateInjectionModule } from "../attacks/prompt-template-injection.js";
+import { systemPromptDisclosureModule } from "../attacks/system-prompt-disclosure.js";
+import { toolInventoryDisclosureModule } from "../attacks/tool-inventory-disclosure.js";
 import type { AttackModule, CodebaseAnalysis } from "../lib/types.js";
 
 const ALL_MODULES: AttackModule[] = [
@@ -98,6 +100,8 @@ const ALL_MODULES: AttackModule[] = [
   sdkDependencyAttackModule,
   fineTuningDataInjectionModule,
   promptTemplateInjectionModule,
+  systemPromptDisclosureModule,
+  toolInventoryDisclosureModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {

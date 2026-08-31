@@ -165,7 +165,9 @@ export type AttackCategory =
   | "mcp_tool_annotation_spoofing"
   | "mcp_protocol_downgrade"
   | "mcp_session_hijacking"
-  | "mcp_capability_manipulation";
+  | "mcp_capability_manipulation"
+  | "system_prompt_disclosure"
+  | "tool_inventory_disclosure";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -331,6 +333,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "mcp_protocol_downgrade",
   "mcp_session_hijacking",
   "mcp_capability_manipulation",
+  "system_prompt_disclosure",
+  "tool_inventory_disclosure",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);

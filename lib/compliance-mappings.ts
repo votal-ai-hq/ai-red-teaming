@@ -168,6 +168,8 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "model_fingerprinting",
       "debug_access",
       "reasoning_trace_leakage",
+      "system_prompt_disclosure",
+      "tool_inventory_disclosure",
     ],
   },
   {
