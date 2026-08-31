@@ -187,6 +187,8 @@ const SEVERITY_WEIGHTS: Record<AttackCategory, number> = {
   tool_inventory_disclosure: 9,
   agent_config_disclosure: 8,
   rag_source_disclosure: 8,
+  infra_endpoint_disclosure: 9,
+  model_identity_disclosure: 5,
 };
 
 const CATEGORIES = Object.keys(SEVERITY_WEIGHTS) as AttackCategory[];

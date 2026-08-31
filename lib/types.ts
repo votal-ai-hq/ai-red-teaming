@@ -169,7 +169,9 @@ export type AttackCategory =
   | "system_prompt_disclosure"
   | "tool_inventory_disclosure"
   | "agent_config_disclosure"
-  | "rag_source_disclosure";
+  | "rag_source_disclosure"
+  | "infra_endpoint_disclosure"
+  | "model_identity_disclosure";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -339,6 +341,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "tool_inventory_disclosure",
   "agent_config_disclosure",
   "rag_source_disclosure",
+  "infra_endpoint_disclosure",
+  "model_identity_disclosure",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);

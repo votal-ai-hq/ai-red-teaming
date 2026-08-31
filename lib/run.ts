@@ -234,6 +234,8 @@ import { systemPromptDisclosureModule } from "../attacks/system-prompt-disclosur
 import { toolInventoryDisclosureModule } from "../attacks/tool-inventory-disclosure.js";
 import { agentConfigDisclosureModule } from "../attacks/agent-config-disclosure.js";
 import { ragSourceDisclosureModule } from "../attacks/rag-source-disclosure.js";
+import { infraEndpointDisclosureModule } from "../attacks/infra-endpoint-disclosure.js";
+import { modelIdentityDisclosureModule } from "../attacks/model-identity-disclosure.js";
 
 export const ALL_MODULES: AttackModule[] = [
   authBypassModule,
@@ -396,6 +398,8 @@ export const ALL_MODULES: AttackModule[] = [
   toolInventoryDisclosureModule,
   agentConfigDisclosureModule,
   ragSourceDisclosureModule,
+  infraEndpointDisclosureModule,
+  modelIdentityDisclosureModule,
 ];
 
 export const MCP_MODULES: AttackModule[] = [

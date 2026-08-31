@@ -52,6 +52,8 @@ import { systemPromptDisclosureModule } from "../attacks/system-prompt-disclosur
 import { toolInventoryDisclosureModule } from "../attacks/tool-inventory-disclosure.js";
 import { agentConfigDisclosureModule } from "../attacks/agent-config-disclosure.js";
 import { ragSourceDisclosureModule } from "../attacks/rag-source-disclosure.js";
+import { infraEndpointDisclosureModule } from "../attacks/infra-endpoint-disclosure.js";
+import { modelIdentityDisclosureModule } from "../attacks/model-identity-disclosure.js";
 import type { AttackModule, CodebaseAnalysis } from "../lib/types.js";
 
 const ALL_MODULES: AttackModule[] = [
@@ -106,6 +108,8 @@ const ALL_MODULES: AttackModule[] = [
   toolInventoryDisclosureModule,
   agentConfigDisclosureModule,
   ragSourceDisclosureModule,
+  infraEndpointDisclosureModule,
+  modelIdentityDisclosureModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {

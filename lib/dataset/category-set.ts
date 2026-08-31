@@ -59,6 +59,8 @@ const AGENT_CATEGORY_POOL: AttackCategory[] = [
   "tool_inventory_disclosure",
   "agent_config_disclosure",
   "rag_source_disclosure",
+  "infra_endpoint_disclosure",
+  "model_identity_disclosure",
   "goal_hijack",
   "memory_poisoning",
   "pii_disclosure",
