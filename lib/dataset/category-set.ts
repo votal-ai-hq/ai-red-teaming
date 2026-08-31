@@ -57,6 +57,8 @@ const AGENT_CATEGORY_POOL: AttackCategory[] = [
   "indirect_prompt_injection",
   "system_prompt_disclosure",
   "tool_inventory_disclosure",
+  "agent_config_disclosure",
+  "rag_source_disclosure",
   "goal_hijack",
   "memory_poisoning",
   "pii_disclosure",

@@ -83,6 +83,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "file_system_exfiltration",
       "staged_exfiltration",
       "reasoning_trace_leakage",
+      "rag_source_disclosure",
     ],
   },
   {
@@ -170,6 +171,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "reasoning_trace_leakage",
       "system_prompt_disclosure",
       "tool_inventory_disclosure",
+      "agent_config_disclosure",
     ],
   },
   {

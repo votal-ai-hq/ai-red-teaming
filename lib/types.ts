@@ -167,7 +167,9 @@ export type AttackCategory =
   | "mcp_session_hijacking"
   | "mcp_capability_manipulation"
   | "system_prompt_disclosure"
-  | "tool_inventory_disclosure";
+  | "tool_inventory_disclosure"
+  | "agent_config_disclosure"
+  | "rag_source_disclosure";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -335,6 +337,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "mcp_capability_manipulation",
   "system_prompt_disclosure",
   "tool_inventory_disclosure",
+  "agent_config_disclosure",
+  "rag_source_disclosure",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);
