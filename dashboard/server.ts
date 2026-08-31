@@ -21,8 +21,8 @@ import {
   isAbsolute as isAbsolutePath,
 } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { cloneCodebaseRepoToDir } from "../lib/clone-codebase-repo.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { loadConfigFromObject } from "../lib/config-loader.js";
 import { discoverMcpSurface } from "../lib/mcp/discovery.js";
@@ -665,24 +665,9 @@ function cloneCodebaseRepo(config: Config, jobId: string): string | null {
   const tmpDir = mkdtempSync(
     join(tmpdir(), `redteam-src-${jobId.slice(0, 8)}-`),
   );
-  let repoUrl = config.codebaseRepo;
-
-  // Inject token for private repos: https://token@github.com/org/repo.git
-  // Token from config takes precedence, falls back to CODEBASE_REPO_TOKEN env var
-  const token =
-    config.codebaseRepoToken || process.env.CODEBASE_REPO_TOKEN || "";
-  if (token && repoUrl.startsWith("https://")) {
-    repoUrl = repoUrl.replace("https://", `https://${token}@`);
-  }
-
-  const branch = config.codebaseRepoBranch || "";
-  const branchFlag = branch ? `--branch ${branch}` : "";
 
   console.log(`  Cloning ${config.codebaseRepo} into ${tmpDir} ...`);
-  execSync(`git clone --depth 1 ${branchFlag} ${repoUrl} ${tmpDir}`, {
-    stdio: "pipe",
-    timeout: 120_000, // 2 min max
-  });
+  cloneCodebaseRepoToDir(config, tmpDir);
   console.log(`  Clone complete: ${tmpDir}`);
   return tmpDir;
 }

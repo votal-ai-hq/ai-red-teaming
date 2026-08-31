@@ -15,7 +15,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { cloneCodebaseRepoToDir } from "./lib/clone-codebase-repo.js";
 
 // Color coding for security results
 function getColoredIcon(verdict: string): string {
@@ -90,24 +90,11 @@ function cloneCodebaseRepo(
   if (!config.codebaseRepo || config.codebasePath) return null;
 
   const tmpDir = mkdtempSync(`${tmpdir()}/redteam-cli-`);
-  let repoUrl = config.codebaseRepo;
-
-  const token =
-    config.codebaseRepoToken || process.env.CODEBASE_REPO_TOKEN || "";
-  if (token && repoUrl.startsWith("https://")) {
-    repoUrl = repoUrl.replace("https://", `https://${token}@`);
-  }
-
   const branch = config.codebaseRepoBranch || "";
-  const branchFlag = branch ? `--branch ${branch}` : "";
-
   console.log(
     `  Cloning ${config.codebaseRepo}${branch ? ` (branch: ${branch})` : ""}...`,
   );
-  execSync(`git clone --depth 1 ${branchFlag} ${repoUrl} ${tmpDir}`, {
-    stdio: "pipe",
-    timeout: 120_000,
-  });
+  cloneCodebaseRepoToDir(config, tmpDir);
   console.log(`  Clone complete → white-box analysis enabled`);
   return tmpDir;
 }
