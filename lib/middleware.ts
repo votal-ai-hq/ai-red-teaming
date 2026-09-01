@@ -6,7 +6,11 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { validateToken, type AuthContext } from "./auth.js";
-import { validateDevToken } from "./auth-dev.js";
+import {
+  assertDevAuthModeAllowed,
+  resolveDevApiKey,
+  validateDevToken,
+} from "./auth-dev.js";
 import { validateApiKey } from "./auth-apikey.js";
 import { validateSimpleSession } from "./auth-simple.js";
 import { checkPermission } from "./rbac.js";
@@ -133,10 +137,15 @@ async function handleRequest(
     let authCtx: AuthContext;
     try {
       if (authMode === "dev") {
-        // Dev mode: auto-authenticate all requests as admin
-        authCtx = await validateDevToken(
-          "Bearer " + (process.env.DEV_API_KEY || "dev-key"),
-        );
+        assertDevAuthModeAllowed();
+        const presented = req.headers.authorization;
+        if (typeof presented === "string" && presented.trim()) {
+          authCtx = await validateDevToken(presented);
+        } else {
+          // Dashboard "no login" UX: synthesize the configured key only after
+          // production is rejected and DEV_API_KEY is a real secret.
+          authCtx = await validateDevToken(`Bearer ${resolveDevApiKey()}`);
+        }
       } else if (authMode === "simple") {
         authCtx = await validateSimpleSession(req.headers.cookie);
       } else if (req.headers["x-api-key"]) {

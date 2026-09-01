@@ -3,9 +3,11 @@
  * Uses a simple API key (DEV_API_KEY env var) instead of OIDC JWT.
  * Auto-creates a default tenant and admin user on first use.
  *
- * NEVER use in production — set AUTH_MODE=dev only for local testing.
+ * AUTH_MODE=dev is forbidden when NODE_ENV=production.
+ * DEV_API_KEY must be set to a unique value (not the historical default "dev-key").
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { query } from "./db.js";
 import { generateTenantKey } from "./encryption.js";
 import type { AuthContext } from "./auth.js";
@@ -14,6 +16,35 @@ import type { Role } from "./rbac.js";
 let devTenantId: string | null = null;
 let devUserId: string | null = null;
 
+export function assertDevAuthModeAllowed(): void {
+  const env = (process.env.NODE_ENV || "").trim().toLowerCase();
+  if (env === "production") {
+    throw new Error(
+      "AUTH_MODE=dev is forbidden when NODE_ENV=production. Use OIDC or AUTH_MODE=simple.",
+    );
+  }
+}
+
+export function resolveDevApiKey(): string {
+  const key = process.env.DEV_API_KEY?.trim() || "";
+  if (!key || key === "dev-key") {
+    throw new Error(
+      "DEV_API_KEY must be set to a unique value (at least 16 characters, not 'dev-key') when AUTH_MODE=dev",
+    );
+  }
+  if (key.length < 16) {
+    throw new Error("DEV_API_KEY must be at least 16 characters");
+  }
+  return key;
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
+
 /**
  * Validate a dev API key from the Authorization header.
  * Format: "Bearer <DEV_API_KEY>" or "ApiKey <DEV_API_KEY>"
@@ -21,19 +52,18 @@ let devUserId: string | null = null;
 export async function validateDevToken(
   authHeader: string | undefined,
 ): Promise<AuthContext> {
-  const devKey = process.env.DEV_API_KEY || "dev-key";
+  assertDevAuthModeAllowed();
+  const devKey = resolveDevApiKey();
 
   if (!authHeader) {
     throw new Error("Missing Authorization header");
   }
 
-  // Accept "Bearer <key>" or "ApiKey <key>"
   const token = authHeader.replace(/^(Bearer|ApiKey)\s+/i, "").trim();
-  if (token !== devKey) {
+  if (!token || !safeEqual(token, devKey)) {
     throw new Error("Invalid dev API key");
   }
 
-  // Ensure default tenant exists
   if (!devTenantId) {
     const existing = await query<{ id: string }>(
       "SELECT id FROM tenants WHERE name = $1",
@@ -54,9 +84,8 @@ export async function validateDevToken(
     }
   }
 
-  // Ensure default admin user exists
   if (!devUserId) {
-    const existing = await query<{ id: string }>(
+    const existing = await query<{ id: string; role?: string }>(
       "SELECT id FROM users WHERE tenant_id = $1 AND sub = $2",
       [devTenantId, "dev-admin"],
     );
