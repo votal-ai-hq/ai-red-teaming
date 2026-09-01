@@ -11,9 +11,14 @@ import { createHash } from "node:crypto";
 import { isAttackCategory } from "./category-set.js";
 import type { DatasetFamily } from "./category-set.js";
 import { isQualityTask, isQualityMetric } from "./quality-set.js";
+import {
+  validateMcpQualityContract,
+  validateMcpSecurityContract,
+} from "./mcp-contract.js";
 import { toText } from "./to-text.js";
 import type {
   DatasetRow,
+  McpDatasetContract,
   QualityRow,
   Severity,
   ValidationResult,
@@ -44,7 +49,7 @@ function isSeverity(s: unknown): s is Severity {
  */
 export function validateRows(
   rows: unknown[],
-  opts?: { family?: DatasetFamily },
+  opts?: { family?: DatasetFamily; mcpContract?: McpDatasetContract },
 ): ValidationResult {
   const valid: DatasetRow[] = [];
   const errors: string[] = [];
@@ -125,13 +130,6 @@ export function validateRows(
       }
     }
 
-    const h = hashPrompt(prompt);
-    if (seen.has(h)) {
-      duplicatesDropped++;
-      return;
-    }
-    seen.add(h);
-
     const row: DatasetRow = {
       category,
       name: String(o.name ?? `${category} case`).trim(),
@@ -162,6 +160,23 @@ export function validateRows(
       row._mcpArguments = o._mcpArguments as Record<string, unknown>;
     }
 
+    if (opts?.family === "mcp" && opts.mcpContract) {
+      const contractErrors = validateMcpSecurityContract(row, opts.mcpContract);
+      if (contractErrors.length > 0) {
+        errors.push(
+          `row ${idx} (${category}): MCP contract violation: ${contractErrors.join("; ")}`,
+        );
+        return;
+      }
+    }
+
+    const h = hashPrompt(prompt);
+    if (seen.has(h)) {
+      duplicatesDropped++;
+      return;
+    }
+    seen.add(h);
+
     valid.push(row);
     histogram[category] = (histogram[category] ?? 0) + 1;
   });
@@ -190,7 +205,10 @@ export interface QualityValidationResult {
  */
 export function validateQualityRows(
   rows: unknown[],
-  opts?: { allowedTasks?: Iterable<string> },
+  opts?: {
+    allowedTasks?: Iterable<string>;
+    mcpContract?: McpDatasetContract;
+  },
 ): QualityValidationResult {
   const valid: QualityRow[] = [];
   const errors: string[] = [];
@@ -228,17 +246,14 @@ export function validateQualityRows(
       errors.push(`row ${idx} (${task}): unknown metric "${metric}"`);
       return;
     }
-    if (!reference && expectedTools.length === 0) {
-      errors.push(`row ${idx} (${task}): no reference or expectedTools to grade against`);
+    if (metric === "tool_call_accuracy" && expectedTools.length === 0) {
+      errors.push(`row ${idx} (${task}): tool_call_accuracy requires expectedTools`);
       return;
     }
-
-    const h = hashPrompt(input);
-    if (seen.has(h)) {
-      duplicatesDropped++;
+    if (metric !== "tool_call_accuracy" && !reference) {
+      errors.push(`row ${idx} (${task}): metric "${metric}" requires a reference`);
       return;
     }
-    seen.add(h);
 
     const row: QualityRow = {
       task,
@@ -249,6 +264,23 @@ export function validateQualityRows(
     if (reference) row.reference = reference;
     if (expectedTools.length) row.expectedTools = expectedTools;
     if (o.note) row.note = String(o.note).trim();
+
+    if (opts?.mcpContract) {
+      const contractErrors = validateMcpQualityContract(row, opts.mcpContract);
+      if (contractErrors.length > 0) {
+        errors.push(
+          `row ${idx} (${task}): MCP contract violation: ${contractErrors.join("; ")}`,
+        );
+        return;
+      }
+    }
+
+    const h = hashPrompt(input);
+    if (seen.has(h)) {
+      duplicatesDropped++;
+      return;
+    }
+    seen.add(h);
 
     valid.push(row);
     histogram[task] = (histogram[task] ?? 0) + 1;
@@ -267,7 +299,11 @@ export function mergeDatasets(
   kind: "security" | "quality",
   existing: unknown[],
   incoming: unknown[],
-  opts?: { allowedTasks?: Iterable<string>; family?: DatasetFamily },
+  opts?: {
+    allowedTasks?: Iterable<string>;
+    family?: DatasetFamily;
+    mcpContract?: McpDatasetContract;
+  },
 ): (ValidationResult | QualityValidationResult) & { added: number } {
   const existingArr = Array.isArray(existing) ? existing : [];
   const existingCount = existingArr.length;
@@ -283,9 +319,15 @@ export function mergeDatasets(
         if (t) allowed.add(t);
       }
     }
-    res = validateQualityRows(combined, { allowedTasks: allowed });
+    res = validateQualityRows(combined, {
+      allowedTasks: allowed,
+      mcpContract: opts?.mcpContract,
+    });
   } else {
-    res = validateRows(combined, { family: opts?.family });
+    res = validateRows(combined, {
+      family: opts?.family,
+      mcpContract: opts?.mcpContract,
+    });
   }
   return { ...res, added: res.valid.length - existingCount };
 }
