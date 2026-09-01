@@ -15,6 +15,7 @@ import { validateApiKey } from "./auth-apikey.js";
 import { validateSimpleSession } from "./auth-simple.js";
 import { checkPermission } from "./rbac.js";
 import { isDbConfigured } from "./db.js";
+import { resolveAuthMode, shouldBypassDashboardAuth } from "./auth-mode.js";
 import type { Role } from "./rbac.js";
 
 export interface RequestContext {
@@ -126,10 +127,11 @@ async function handleRequest(
       return handler(req, res, null);
     }
 
-    const authMode = process.env.AUTH_MODE || "none";
+    const authMode = resolveAuthMode();
 
-    // If no DB configured, skip auth unless an explicit auth mode still applies.
-    if (!isDbConfigured() && authMode !== "simple") {
+    // Unauthenticated access is opt-in (AUTH_MODE=none) and never allowed
+    // when NODE_ENV=production. Missing DATABASE_URL used to skip auth.
+    if (shouldBypassDashboardAuth()) {
       return handler(req, res, null);
     }
 

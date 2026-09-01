@@ -123,6 +123,11 @@ import type { Config, Report } from "../lib/types.js";
 import type { AttackResult } from "../lib/types.js";
 import { withMiddleware, type RequestContext } from "../lib/middleware.js";
 import {
+  assertDashboardAuthSafeToServe,
+  resolveAuthMode,
+  resolveDashboardBindHost,
+} from "../lib/auth-mode.js";
+import {
   isDbConfigured,
   isTransientDbError,
   runMigrations,
@@ -1023,8 +1028,7 @@ const server = createServer(
 
     // ── Auth config (public — no auth required) ──
     if (url.pathname === "/api/auth-config" && req.method === "GET") {
-      const authMode =
-        process.env.AUTH_MODE || (isDbConfigured() ? "oidc" : "none");
+      const authMode = resolveAuthMode();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
@@ -1037,7 +1041,7 @@ const server = createServer(
     }
 
     if (url.pathname === "/api/auth/login" && req.method === "POST") {
-      if ((process.env.AUTH_MODE || "none") !== "simple") {
+      if (resolveAuthMode() !== "simple") {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Simple auth is not enabled" }));
         return;
@@ -1137,7 +1141,7 @@ const server = createServer(
     }
 
     if (url.pathname === "/api/auth/me" && req.method === "GET") {
-      if ((process.env.AUTH_MODE || "none") !== "simple") {
+      if (resolveAuthMode() !== "simple") {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Simple auth is not enabled" }));
         return;
@@ -4241,39 +4245,49 @@ Be specific and reference the actual attack results. Do not be generic.`;
       console.log("  Enterprise mode: Postgres connected, auth enabled");
     } catch (err) {
       console.warn(
-        "  ⚠ Database connection failed — falling back to local mode (no auth, file-based reports)",
+        "  ⚠ Database connection failed — falling back to local file-based reports",
       );
       console.warn(`    ${err instanceof Error ? err.message : String(err)}`);
       console.warn(
         "    To fix: start Postgres, or unset DATABASE_URL in .env for local-only mode\n",
       );
-      // Disable DB so the rest of the server works in local mode
       process.env.__DB_DISABLED = "1";
     }
   }
 
-  server.listen(PORT, () => {
-    const authMode =
-      process.env.AUTH_MODE || (isDbConfigured() ? "oidc" : "none");
-    console.log(`\n  Red Team Dashboard → http://localhost:${PORT}`);
-    console.log(`  Run API            → POST http://localhost:${PORT}/api/run`);
+  assertDashboardAuthSafeToServe();
+  const bindHost = resolveDashboardBindHost();
+
+  server.listen(PORT, bindHost, () => {
+    const authMode = resolveAuthMode();
+    const dashboardUrl =
+      bindHost === "0.0.0.0" || bindHost === "::"
+        ? `http://localhost:${PORT}`
+        : `http://${bindHost}:${PORT}`;
+    console.log(`\n  Red Team Dashboard → ${dashboardUrl}`);
+    console.log(`  Bind              → ${bindHost}:${PORT}`);
+    console.log(`  Run API            → POST ${dashboardUrl}/api/run`);
     console.log(
-      `  Job status         → GET  http://localhost:${PORT}/api/run/:id`,
+      `  Job status         → GET  ${dashboardUrl}/api/run/:id`,
     );
     console.log(
-      `  All runs           → GET  http://localhost:${PORT}/api/runs`,
+      `  All runs           → GET  ${dashboardUrl}/api/runs`,
     );
     if (isDbConfigured()) {
       console.log(
-        `  Audit log          → GET  http://localhost:${PORT}/api/audit-log`,
+        `  Audit log          → GET  ${dashboardUrl}/api/audit-log`,
       );
       console.log(
         `  Mode: Enterprise (Postgres + Auth + RBAC, auth=${authMode})`,
       );
     } else if (authMode === "simple") {
       console.log(`  Mode: Local (file-based reports + simple cookie auth)`);
+    } else if (authMode === "none") {
+      console.log(
+        `  Mode: Local (no auth, file-based reports, localhost only)`,
+      );
     } else {
-      console.log(`  Mode: Local (no auth, file-based reports)`);
+      console.log(`  Mode: Local (auth=${authMode}, file-based reports)`);
     }
     console.log();
   });
