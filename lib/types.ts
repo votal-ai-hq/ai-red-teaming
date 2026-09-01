@@ -173,7 +173,9 @@ export type AttackCategory =
   | "infra_endpoint_disclosure"
   | "model_identity_disclosure"
   | "api_key_extraction"
-  | "env_secret_extraction";
+  | "env_secret_extraction"
+  | "token_extraction"
+  | "tool_credential_harvesting";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -347,6 +349,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "model_identity_disclosure",
   "api_key_extraction",
   "env_secret_extraction",
+  "token_extraction",
+  "tool_credential_harvesting",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);

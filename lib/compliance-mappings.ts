@@ -87,6 +87,8 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "infra_endpoint_disclosure",
       "api_key_extraction",
       "env_secret_extraction",
+      "token_extraction",
+      "tool_credential_harvesting",
     ],
   },
   {

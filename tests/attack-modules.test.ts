@@ -56,6 +56,8 @@ import { infraEndpointDisclosureModule } from "../attacks/infra-endpoint-disclos
 import { modelIdentityDisclosureModule } from "../attacks/model-identity-disclosure.js";
 import { apiKeyExtractionModule } from "../attacks/api-key-extraction.js";
 import { envSecretExtractionModule } from "../attacks/env-secret-extraction.js";
+import { tokenExtractionModule } from "../attacks/token-extraction.js";
+import { toolCredentialHarvestingModule } from "../attacks/tool-credential-harvesting.js";
 import type { AttackModule, CodebaseAnalysis } from "../lib/types.js";
 
 const ALL_MODULES: AttackModule[] = [
@@ -114,6 +116,8 @@ const ALL_MODULES: AttackModule[] = [
   modelIdentityDisclosureModule,
   apiKeyExtractionModule,
   envSecretExtractionModule,
+  tokenExtractionModule,
+  toolCredentialHarvestingModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {

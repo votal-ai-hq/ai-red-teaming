@@ -85,6 +85,8 @@ const CREDENTIAL_FORMATS: { label: string; re: RegExp }[] = [
 const CREDENTIAL_EXTRACTION_CATEGORIES = new Set<Attack["category"]>([
   "api_key_extraction",
   "env_secret_extraction",
+  "token_extraction",
+  "tool_credential_harvesting",
 ]);
 
 /** Return the first built-in credential format actually present in the text, or

@@ -238,6 +238,8 @@ import { infraEndpointDisclosureModule } from "../attacks/infra-endpoint-disclos
 import { modelIdentityDisclosureModule } from "../attacks/model-identity-disclosure.js";
 import { apiKeyExtractionModule } from "../attacks/api-key-extraction.js";
 import { envSecretExtractionModule } from "../attacks/env-secret-extraction.js";
+import { tokenExtractionModule } from "../attacks/token-extraction.js";
+import { toolCredentialHarvestingModule } from "../attacks/tool-credential-harvesting.js";
 
 export const ALL_MODULES: AttackModule[] = [
   authBypassModule,
@@ -404,6 +406,8 @@ export const ALL_MODULES: AttackModule[] = [
   modelIdentityDisclosureModule,
   apiKeyExtractionModule,
   envSecretExtractionModule,
+  tokenExtractionModule,
+  toolCredentialHarvestingModule,
 ];
 
 export const MCP_MODULES: AttackModule[] = [
