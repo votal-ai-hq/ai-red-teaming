@@ -54,6 +54,8 @@ import { agentConfigDisclosureModule } from "../attacks/agent-config-disclosure.
 import { ragSourceDisclosureModule } from "../attacks/rag-source-disclosure.js";
 import { infraEndpointDisclosureModule } from "../attacks/infra-endpoint-disclosure.js";
 import { modelIdentityDisclosureModule } from "../attacks/model-identity-disclosure.js";
+import { apiKeyExtractionModule } from "../attacks/api-key-extraction.js";
+import { envSecretExtractionModule } from "../attacks/env-secret-extraction.js";
 import type { AttackModule, CodebaseAnalysis } from "../lib/types.js";
 
 const ALL_MODULES: AttackModule[] = [
@@ -110,6 +112,8 @@ const ALL_MODULES: AttackModule[] = [
   ragSourceDisclosureModule,
   infraEndpointDisclosureModule,
   modelIdentityDisclosureModule,
+  apiKeyExtractionModule,
+  envSecretExtractionModule,
 ];
 
 const mockAnalysis: CodebaseAnalysis = {

@@ -85,6 +85,8 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "reasoning_trace_leakage",
       "rag_source_disclosure",
       "infra_endpoint_disclosure",
+      "api_key_extraction",
+      "env_secret_extraction",
     ],
   },
   {
