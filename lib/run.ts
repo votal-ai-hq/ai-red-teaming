@@ -240,6 +240,8 @@ import { apiKeyExtractionModule } from "../attacks/api-key-extraction.js";
 import { envSecretExtractionModule } from "../attacks/env-secret-extraction.js";
 import { tokenExtractionModule } from "../attacks/token-extraction.js";
 import { toolCredentialHarvestingModule } from "../attacks/tool-credential-harvesting.js";
+import { secretManagerExtractionModule } from "../attacks/secret-manager-extraction.js";
+import { credentialReuseModule } from "../attacks/credential-reuse.js";
 
 export const ALL_MODULES: AttackModule[] = [
   authBypassModule,
@@ -408,6 +410,8 @@ export const ALL_MODULES: AttackModule[] = [
   envSecretExtractionModule,
   tokenExtractionModule,
   toolCredentialHarvestingModule,
+  secretManagerExtractionModule,
+  credentialReuseModule,
 ];
 
 export const MCP_MODULES: AttackModule[] = [

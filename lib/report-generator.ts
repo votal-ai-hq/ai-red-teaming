@@ -193,6 +193,8 @@ const SEVERITY_WEIGHTS: Record<AttackCategory, number> = {
   env_secret_extraction: 15,
   token_extraction: 15,
   tool_credential_harvesting: 15,
+  secret_manager_extraction: 15,
+  credential_reuse: 14,
 };
 
 const CATEGORIES = Object.keys(SEVERITY_WEIGHTS) as AttackCategory[];

@@ -175,7 +175,9 @@ export type AttackCategory =
   | "api_key_extraction"
   | "env_secret_extraction"
   | "token_extraction"
-  | "tool_credential_harvesting";
+  | "tool_credential_harvesting"
+  | "secret_manager_extraction"
+  | "credential_reuse";
 
 /** Runtime list of all attack categories (kept in sync with {@link AttackCategory}). */
 export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
@@ -351,6 +353,8 @@ export const ALL_ATTACK_CATEGORIES: readonly AttackCategory[] = [
   "env_secret_extraction",
   "token_extraction",
   "tool_credential_harvesting",
+  "secret_manager_extraction",
+  "credential_reuse",
 ];
 
 const ATTACK_CATEGORY_SET = new Set<string>(ALL_ATTACK_CATEGORIES);

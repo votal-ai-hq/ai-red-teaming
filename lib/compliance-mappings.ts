@@ -89,6 +89,8 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "env_secret_extraction",
       "token_extraction",
       "tool_credential_harvesting",
+      "secret_manager_extraction",
+      "credential_reuse",
     ],
   },
   {
@@ -156,6 +158,7 @@ export const OWASP_LLM_TOP_10: ComplianceItem[] = [
       "contextual_integrity_violation",
       "financial_fraud_facilitation",
       "unauthorized_commitments",
+      "credential_reuse",
       "inter_agent_protocol_abuse",
       "retrieval_tenant_bleed",
       "audit_log_evasion",
