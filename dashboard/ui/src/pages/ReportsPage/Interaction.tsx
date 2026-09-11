@@ -1,12 +1,18 @@
-import { useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Braces, ArrowRight } from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import { ChevronDown, ChevronRight, Braces, Check, Copy } from "lucide-react";
 import {
   buildProtocolTrace,
   partyLabel,
   requestTitle,
-  type FlowParty,
   type FlowStep,
   type KeyValue,
+  type ProtocolEvent,
   type RequestSummary,
   type ResponseSummary,
   type StructuredTable,
@@ -450,91 +456,255 @@ export function ResponsePanel({
 
 /* ─── interaction flow ─── */
 
-const PARTY_STYLE: Record<FlowParty, string> = {
-  user: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-  model: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
-  server: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-  system: "bg-muted text-muted-foreground",
-};
+/**
+ * The flow renders as a chat transcript. Steps the user sends are right-aligned
+ * bubbles, steps addressed to the user are left-aligned bubbles, and everything
+ * in between (system prompts, the model's tool calls, tool results) is a
+ * compact divider row that expands on demand. A rail on the left keeps the
+ * 1-based step numbers so a step can still be cited by index.
+ */
 
-function PartyChip({ party, isMcp }: { party: FlowParty; isMcp: boolean }) {
+type StepKind = "user" | "agent" | "aside";
+
+function stepKind(step: FlowStep): StepKind {
+  if (step.from === "user") return "user";
+  if (step.to === "user") return "agent";
+  return "aside";
+}
+
+/** Titles that only restate what the bubble's position already says. */
+const GENERIC_TITLES = new Set(["Request", "Response", "User message", "User task"]);
+
+function firstText(...values: Array<string | undefined>): string | undefined {
+  return values.find((v) => typeof v === "string" && v.trim().length > 0);
+}
+
+/** Plain-text transcript for the clipboard, one block per step. */
+export function transcriptText(steps: FlowStep[], isMcp: boolean): string {
+  return steps
+    .map((step) => {
+      const who = partyLabel(step.from, isMcp);
+      const turn = step.turn != null ? ` · turn ${step.turn}` : "";
+      const body =
+        firstText(
+          step.request?.message,
+          step.note,
+          step.response?.text,
+          step.response?.headline,
+        ) ?? step.title;
+      return `[${step.index}] ${who}${turn}: ${body}`;
+    })
+    .join("\n\n");
+}
+
+function stop(e: MouseEvent) {
+  e.stopPropagation();
+}
+
+function CopyTranscriptButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+
   return (
-    <span
-      className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${PARTY_STYLE[party]}`}
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+        } catch {
+          /* clipboard blocked — the transcript is visible to copy manually */
+        }
+      }}
+      className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
     >
-      {partyLabel(party, isMcp)}
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {copied ? "Copied" : "Copy transcript"}
+    </button>
+  );
+}
+
+function StepMeta({ step }: { step: FlowStep }) {
+  if (step.statusCode == null && step.timeMs == null) return null;
+  return (
+    <span className="inline-flex items-center gap-2 text-[10px] text-muted-foreground">
+      {step.statusCode != null && <span>HTTP {step.statusCode}</span>}
+      {step.timeMs != null && <span>{step.timeMs}ms</span>}
     </span>
   );
 }
 
-function FlowRow({ step, isMcp }: { step: FlowStep; isMcp: boolean }) {
-  const [open, setOpen] = useState(step.tone !== "note");
-  const accent =
-    step.tone === "error"
-      ? "border-l-red-400"
-      : step.tone === "request"
-        ? "border-l-blue-400"
-        : step.tone === "model"
-          ? "border-l-violet-400"
-          : step.tone === "response"
-            ? "border-l-emerald-400"
-            : "border-l-border";
+function StepBody({ step }: { step: FlowStep }) {
+  return (
+    <div className="space-y-2">
+      {step.request && <RequestBody request={step.request} />}
+      {step.response && <ResponseBody response={step.response} />}
+      {step.note && <ExpandableText text={truncateForNote(step.note)} maxLines={6} />}
+      {!step.request && !step.response && step.raw != null && (
+        <RawJsonToggle data={step.raw} label="raw step" />
+      )}
+    </div>
+  );
+}
+
+/** A user or agent message, laid out like a chat bubble. */
+function Bubble({
+  step,
+  isMcp,
+  side,
+}: {
+  step: FlowStep;
+  isMcp: boolean;
+  side: "user" | "agent";
+}) {
+  const isUser = side === "user";
+  const isError = step.tone === "error";
+  const showTitle = !GENERIC_TITLES.has(step.title);
 
   return (
-    <li className={`rounded-r-lg border border-l-2 border-border ${accent} bg-card`}>
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`min-w-0 max-w-[85%] rounded-xl border px-3 py-2 ${
+          isUser
+            ? "border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
+            : "border-border bg-card"
+        } ${isError ? "rounded-l-none border-l-2 border-l-red-400" : ""}`}
+      >
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className={`text-[11px] font-semibold ${
+              isUser ? "text-blue-700 dark:text-blue-300" : "text-foreground"
+            }`}
+          >
+            {partyLabel(step.from, isMcp)}
+          </span>
+          {showTitle && (
+            <span className="text-[11px] text-muted-foreground break-words">
+              {step.title}
+            </span>
+          )}
+          {step.turn != null && (
+            <span className="text-[10px] text-muted-foreground">turn {step.turn}</span>
+          )}
+          {step.tags.map((t) => (
+            <Tag key={t} text={t} />
+          ))}
+        </div>
+
+        <StepBody step={step} />
+
+        {(step.statusCode != null || step.timeMs != null) && (
+          <div className="mt-1.5">
+            <StepMeta step={step} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A step that is neither sent by nor addressed to the user: a system prompt, a
+ * tool call, a tool result. Rendered as a centred divider that expands into a
+ * detail card. Poisoned tool results (tone `error`) start open.
+ */
+function AsideRow({ step, isMcp }: { step: FlowStep; isMcp: boolean }) {
+  const [open, setOpen] = useState(step.tone === "error");
+  const hasBody = Boolean(step.request || step.response || step.note);
+  const isError = step.tone === "error";
+  const Chevron = open ? ChevronDown : ChevronRight;
+
+  return (
+    <div>
       <button
         type="button"
+        disabled={!hasBody}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="w-full flex items-start gap-2 px-2.5 py-2 text-left"
+        className="flex w-full items-center gap-2 text-left disabled:cursor-default"
       >
-        {open ? (
-          <ChevronDown size={13} className="mt-1 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight size={13} className="mt-1 shrink-0 text-muted-foreground" />
-        )}
-        <span className="text-[11px] font-mono text-muted-foreground mt-0.5 shrink-0">
-          {step.index}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <PartyChip party={step.from} isMcp={isMcp} />
-            <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
-            <PartyChip party={step.to} isMcp={isMcp} />
-            <span className="text-[12px] font-medium text-foreground break-words">
-              {step.title}
-            </span>
-            {step.turn != null && (
-              <span className="text-[10px] text-muted-foreground">
-                turn {step.turn}
-              </span>
-            )}
-            {step.statusCode != null && (
-              <span className="text-[10px] text-muted-foreground">
-                HTTP {step.statusCode}
-              </span>
-            )}
-            {step.timeMs != null && (
-              <span className="text-[10px] text-muted-foreground">
-                {step.timeMs}ms
-              </span>
-            )}
-            {step.tags.map((t) => (
-              <Tag key={t} text={t} />
-            ))}
+        <span className="h-px flex-1 bg-border" />
+        <span className="flex max-w-[85%] flex-wrap items-center justify-center gap-1.5 px-1">
+          {hasBody && <Chevron size={12} className="shrink-0 text-muted-foreground" />}
+          <span
+            className={`text-[11px] font-medium break-words ${
+              isError ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+            }`}
+          >
+            {step.title}
           </span>
+          <span className="text-[10px] text-muted-foreground">
+            {partyLabel(step.from, isMcp)} → {partyLabel(step.to, isMcp)}
+          </span>
+          {step.tags.map((t) => (
+            <Tag key={t} text={t} />
+          ))}
+          <StepMeta step={step} />
         </span>
+        <span className="h-px flex-1 bg-border" />
       </button>
 
-      {open && (
-        <div className="px-2.5 pb-2.5 pl-8 space-y-2">
-          {step.request && <RequestBody request={step.request} />}
-          {step.response && <ResponseBody response={step.response} />}
-          {step.note && <ExpandableText text={truncateForNote(step.note)} maxLines={6} />}
+      {open && hasBody && (
+        <div
+          className={`mt-2 rounded-lg border px-3 py-2 ${
+            isError
+              ? "border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-950/10"
+              : "border-border bg-card"
+          }`}
+        >
+          <StepBody step={step} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Vertical centre of the step-number chip, so the rail line meets it. */
+const RAIL_CHIP_CENTER = "0.875rem";
+
+function RailRow({
+  index,
+  isFirst,
+  isLast,
+  rowRef,
+  children,
+}: {
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  rowRef?: (el: HTMLLIElement | null) => void;
+  children: ReactNode;
+}) {
+  const showLine = !(isFirst && isLast);
+  return (
+    <li
+      ref={rowRef}
+      className="grid grid-cols-[28px_minmax(0,1fr)] gap-x-2 pb-2 last:pb-0 scroll-mt-4"
+    >
+      <div className="relative flex justify-center">
+        {showLine && (
+          <span
+            aria-hidden="true"
+            className="absolute left-1/2 w-px -translate-x-1/2 bg-border"
+            style={{
+              top: isFirst ? RAIL_CHIP_CENTER : 0,
+              bottom: isLast ? `calc(100% - ${RAIL_CHIP_CENTER})` : 0,
+            }}
+          />
+        )}
+        <span className="relative z-[1] mt-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-border bg-card px-1 font-mono text-[10px] text-muted-foreground">
+          {index}
+        </span>
+      </div>
+      <div className="min-w-0">{children}</div>
     </li>
   );
 }
@@ -547,22 +717,151 @@ export function InteractionFlow({
   steps: FlowStep[];
   isMcp: boolean;
 }) {
+  const rowRefs = useRef<Map<number, HTMLLIElement>>(new Map());
+  // The whole section can be minimised; it starts open because the transcript
+  // is the main evidence for the verdict.
+  const [open, setOpen] = useState(true);
+
   if (steps.length === 0) return null;
+
+  const turns = Array.from(
+    new Set(steps.flatMap((s) => (s.turn != null ? [s.turn] : []))),
+  ).sort((a, b) => a - b);
+  const errorTurns = new Set(
+    steps.flatMap((s) => (s.tone === "error" && s.turn != null ? [s.turn] : [])),
+  );
+
+  const jumpTo = (turn: number) => {
+    const first = steps.find((s) => s.turn === turn);
+    const el = first ? rowRefs.current.get(first.index) : undefined;
+    el?.scrollIntoView({ block: "start" });
+  };
+
+  const summary =
+    `${steps.length} step${steps.length === 1 ? "" : "s"}` +
+    (turns.length > 0 ? ` · ${turns.length} turn${turns.length === 1 ? "" : "s"}` : "");
+
   return (
-    <div>
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-        Interaction Flow ({steps.length} step{steps.length === 1 ? "" : "s"})
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        >
+          {open ? (
+            <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight size={13} className="shrink-0 text-muted-foreground" />
+          )}
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Interaction Flow
+          </span>
+          <span className="text-[10px] text-muted-foreground">{summary}</span>
+        </button>
+        {open && <CopyTranscriptButton text={transcriptText(steps, isMcp)} />}
       </div>
-      <ol className="space-y-1.5">
-        {steps.map((step) => (
-          <FlowRow key={step.index} step={step} isMcp={isMcp} />
-        ))}
-      </ol>
+
+      {open && (
+        <div className="mt-3">
+          {turns.length > 1 && (
+            <div
+              className="mb-3 flex flex-wrap items-center gap-1"
+              onClick={stop}
+            >
+              <span className="mr-1 text-[10px] text-muted-foreground">Jump to turn</span>
+              {turns.map((turn) => (
+                <button
+                  key={turn}
+                  type="button"
+                  aria-label={`Jump to turn ${turn}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    jumpTo(turn);
+                  }}
+                  className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
+                    errorTurns.has(turn)
+                      ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {turn}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <ol>
+            {steps.map((step, i) => {
+              const kind = stepKind(step);
+              return (
+                <RailRow
+                  key={step.index}
+                  index={step.index}
+                  isFirst={i === 0}
+                  isLast={i === steps.length - 1}
+                  rowRef={(el) => {
+                    if (el) rowRefs.current.set(step.index, el);
+                    else rowRefs.current.delete(step.index);
+                  }}
+                >
+                  {kind === "aside" ? (
+                    <AsideRow step={step} isMcp={isMcp} />
+                  ) : (
+                    <Bubble step={step} isMcp={isMcp} side={kind} />
+                  )}
+                </RailRow>
+              );
+            })}
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ─── JSON-RPC protocol trace ─── */
+
+/** One wire message, laid out like the interaction-flow bubbles. */
+function ProtocolBubble({ event }: { event: ProtocolEvent }) {
+  const isClient = event.from === "user";
+  return (
+    <div className={`flex ${isClient ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`min-w-0 max-w-[85%] rounded-xl border px-3 py-2 ${
+          isClient
+            ? "border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40"
+            : "border-border bg-card"
+        } ${event.isError ? "rounded-l-none border-l-2 border-l-red-400" : ""}`}
+      >
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className={`text-[11px] font-semibold ${
+              isClient ? "text-blue-700 dark:text-blue-300" : "text-foreground"
+            }`}
+          >
+            {isClient ? "Client" : "Server"}
+          </span>
+          <span className="text-[11px] text-muted-foreground break-all">
+            {event.label}
+          </span>
+          {event.isNotification && <Tag text="notification" />}
+          {event.isError && (
+            <span className="text-[10px] font-semibold text-red-600 dark:text-red-400">
+              error
+            </span>
+          )}
+        </div>
+        {event.summary && <ExpandableText text={event.summary} maxLines={6} />}
+        <RawJsonToggle data={event.raw} label="raw message" />
+      </div>
+    </div>
+  );
+}
 
 /** The wire-level MCP transcript, collapsed by default. */
 export function ProtocolTrace({ trace }: { trace: TraceLike }) {
@@ -597,42 +896,17 @@ export function ProtocolTrace({ trace }: { trace: TraceLike }) {
       </button>
 
       {open && (
-        <div className="mt-2 space-y-1.5">
-          <ol className="space-y-1">
-            {events.map((event) => (
-              <li
+        <div className="mt-3 space-y-1.5">
+          <ol>
+            {events.map((event, i) => (
+              <RailRow
                 key={event.index}
-                className="rounded-md border border-border/70 px-2 py-1.5"
+                index={event.index}
+                isFirst={i === 0}
+                isLast={i === events.length - 1}
               >
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] font-mono text-muted-foreground">
-                    {event.index}
-                  </span>
-                  <span
-                    className={`text-[10px] font-semibold ${
-                      event.from === "user"
-                        ? "text-blue-600 dark:text-blue-400"
-                        : "text-slate-600 dark:text-slate-300"
-                    }`}
-                  >
-                    {event.from === "user" ? "client → server" : "server → client"}
-                  </span>
-                  <span className="text-[11px] font-medium text-foreground break-all">
-                    {event.label}
-                  </span>
-                  {event.isError && (
-                    <span className="text-[10px] font-semibold text-red-600 dark:text-red-400">
-                      error
-                    </span>
-                  )}
-                </div>
-                {event.summary && (
-                  <p className="mt-0.5 text-[11px] text-muted-foreground whitespace-pre-wrap break-words">
-                    {event.summary}
-                  </p>
-                )}
-                <RawJsonToggle data={event.raw} label="raw message" />
-              </li>
+                <ProtocolBubble event={event} />
+              </RailRow>
             ))}
           </ol>
           {trace.stderr && (

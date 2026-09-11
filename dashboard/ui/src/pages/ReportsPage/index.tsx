@@ -543,9 +543,10 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
     result.statusCode != null ||
     result.responseTimeMs != null ||
     conversations.length > 0;
-  // With more than one exchange the flow IS the request/response view; the
-  // single-exchange case reads better as two side-by-side panels.
-  const showPanels = hasInteraction && flow.length <= 2;
+  // The flow is the request/response view whenever it has steps. The two
+  // side-by-side panels are only a fallback for an interaction whose bodies
+  // were both empty (e.g. a status code with no recorded payloads).
+  const showPanels = hasInteraction && flow.length === 0;
 
   return (
     <>
@@ -627,7 +628,7 @@ function FindingRow({ result, controls = [] }: { result: ReportResult; controls?
                 </div>
               )}
 
-              {/* ── Request & Response (single exchange) ── */}
+              {/* ── Request & Response (fallback when the flow has no steps) ── */}
               {showPanels && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <RequestPanel request={request} />
