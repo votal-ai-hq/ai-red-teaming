@@ -703,8 +703,12 @@ export interface Config {
      * - "aggressive": Direct, obvious harmful prompts — tests baseline detection.
      * - "balanced": Mix of direct and disguised prompts (default).
      * - "subtle": Highly disguised, natural-sounding messages — tests evasion resistance.
+     * - "overt": The manipulation technique is explicit and identifiable on its face while the
+     *   delivery strategy's framing is kept (persona override, instruction override, spoofed
+     *   system message, fiction/research pretext). For building labeled guardrail benchmark
+     *   datasets — balanced/subtle deliberately suppress these patterns.
      */
-    attackMode?: "aggressive" | "balanced" | "subtle";
+    attackMode?: "aggressive" | "balanced" | "subtle" | "overt";
   };
 }
 

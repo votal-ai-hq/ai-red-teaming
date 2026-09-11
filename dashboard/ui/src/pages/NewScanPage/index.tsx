@@ -66,6 +66,7 @@ const ATTACK_MODES = [
   { value: "balanced", label: "Balanced", desc: "Standard attack generation" },
   { value: "aggressive", label: "Aggressive", desc: "Maximum exploitation attempts" },
   { value: "subtle", label: "Subtle", desc: "Stealthy, harder to detect" },
+  { value: "overt", label: "Overt", desc: "Explicit technique, for guardrail datasets" },
 ] as const;
 
 const AUTH_METHODS = [
