@@ -76,6 +76,7 @@ import {
   type ImportFormat,
 } from "../lib/dataset/profile-importers.js";
 import { mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
+import { resolveMcpGenerationContract } from "../lib/dataset/mcp-contract.js";
 import {
   recordsToRows,
   recordsToQualityRows,
@@ -2584,8 +2585,6 @@ const server = createServer(
             : validateProfile(body.profile);
           const profileSeeds = profileToSeeds(profile);
           seeds = mergeSeeds(profileSeeds, seeds) ?? profileSeeds;
-          // mergeSeeds doesn't carry context; keep the profile's context block.
-          if (profileSeeds.context) seeds.context = profileSeeds.context;
           profileInfo = {
             name: profile.name,
             tools: profile.tools?.length ?? 0,
@@ -2606,6 +2605,19 @@ const server = createServer(
             allowCustom: true,
           });
           allowedTasks = preset.tasks;
+        }
+        const mcpContract =
+          preset.family === "mcp"
+            ? resolveMcpGenerationContract(preset, seeds)
+            : undefined;
+        if (
+          kind === "quality" &&
+          preset.family === "mcp" &&
+          !mcpContract?.tools.length
+        ) {
+          throw new Error(
+            "MCP quality generation requires at least one declared tool; provide an MCP profile or seed from target analysis",
+          );
         }
         const ddConfig =
           kind === "quality"
@@ -2666,9 +2678,13 @@ const server = createServer(
         // Validate the freshly generated rows (the quality gate is on these).
         const gen =
           kind === "quality"
-            ? validateQualityRows(recordsToQualityRows(records), { allowedTasks })
+            ? validateQualityRows(recordsToQualityRows(records), {
+                allowedTasks,
+                mcpContract,
+              })
             : validateRows(recordsToRows(records, preset.family), {
                 family: preset.family,
+                mcpContract,
               });
         const errors = gen.errors;
         let valid: unknown[] = gen.valid;
@@ -2706,7 +2722,23 @@ const server = createServer(
           const merged = mergeDatasets(kind, existingRows, valid, {
             allowedTasks,
             family: preset.family,
+            mcpContract,
           });
+          if (merged.errors.length > 0) {
+            const payload = {
+              error: "existing dataset fails current validation",
+              invalid: merged.errors.length,
+              sampleErrors: merged.errors.slice(0, 10),
+            };
+            if (streaming) {
+              res.write(JSON.stringify({ type: "error", ...payload }) + "\n");
+              res.end();
+            } else {
+              res.writeHead(422, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(payload));
+            }
+            return;
+          }
           addedCount = merged.added;
           duplicatesDropped += valid.length - merged.added;
           valid = merged.valid;

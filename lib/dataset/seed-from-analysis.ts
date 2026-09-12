@@ -12,6 +12,10 @@
  */
 import type { CodebaseAnalysis } from "../types.js";
 import type { DatasetSeeds } from "./types.js";
+import {
+  mcpToolContract,
+  mergeMcpContracts,
+} from "./mcp-contract.js";
 
 const MAX_SURFACES = 24;
 const MAX_ROLES = 12;
@@ -86,6 +90,26 @@ export function seedsFromAnalysis(analysis: CodebaseAnalysis): DatasetSeeds {
   const seeds: DatasetSeeds = {};
   if (roles.length) seeds.roles = roles;
   if (surfaces.length) seeds.surfaces = surfaces;
+  if (
+    (analysis.tools?.length ?? 0) > 0 ||
+    (analysis.mcpSurface?.prompts.length ?? 0) > 0 ||
+    (analysis.mcpSurface?.resources.length ?? 0) > 0
+  ) {
+    const tools = new Map(
+      (analysis.tools ?? [])
+        .filter((tool) => Boolean(tool?.name?.trim()))
+        .map((tool) => [
+          clean(tool.name),
+          mcpToolContract(tool.name, tool.parameters),
+        ]),
+    );
+    seeds.mcpContract = {
+      tools: [...tools.values()],
+      prompts: dedupeCap(analysis.mcpSurface?.prompts ?? [], MAX_SURFACES),
+      resources: dedupeCap(analysis.mcpSurface?.resources ?? [], MAX_SURFACES),
+      roles,
+    };
+  }
   return seeds;
 }
 
@@ -107,5 +131,12 @@ export function mergeSeeds(
   );
   if (roles.length) merged.roles = roles;
   if (surfaces.length) merged.surfaces = surfaces;
+  const context = primary.context ?? secondary.context;
+  if (context) merged.context = context;
+  const contract = mergeMcpContracts(
+    primary.mcpContract,
+    secondary.mcpContract,
+  );
+  if (contract) merged.mcpContract = contract;
   return merged;
 }

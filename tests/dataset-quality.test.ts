@@ -81,7 +81,7 @@ describe("validateQualityRows (fail-closed)", () => {
   it("rejects a row with no reference and no expectedTools", () => {
     const r = validateQualityRows([{ task: "rag_answer", input: "q?", metric: "faithfulness" }]);
     expect(r.valid).toHaveLength(0);
-    expect(r.errors[0]).toMatch(/no reference or expectedTools/);
+    expect(r.errors[0]).toMatch(/requires a reference/);
   });
   it("accepts reference-only rows and dedups by input", () => {
     const ref = { task: "rag_answer", input: "refund window?", reference: "30 days", metric: "faithfulness" };
@@ -92,13 +92,18 @@ describe("validateQualityRows (fail-closed)", () => {
 });
 
 describe("buildQualityDataDesignerConfig", () => {
-  it("samplers precede LLM columns and emit task+metric seeds", () => {
+  it("samplers precede LLM columns and emit compatible MCP task/metric pairs", () => {
     const c = buildQualityDataDesignerConfig({ family: "mcp", kind: "quality" });
     const firstLlm = c.columns.findIndex((x) => x.type !== "sampler");
     const lastSampler = c.columns.map((x) => x.type).lastIndexOf("sampler");
     expect(lastSampler).toBeLessThan(firstLlm);
-    expect(c.columns.some((x) => x.name === "task")).toBe(true);
-    expect(c.columns.some((x) => x.name === "metric")).toBe(true);
+    const pairs = c.columns.find((x) => x.name === "taskMetric");
+    expect(pairs && "values" in pairs && pairs.values).toEqual([
+      "tool_selection::tool_call_accuracy",
+      "multi_step_task::tool_call_accuracy",
+      "multi_step_task::goal_accuracy",
+      "goal_completion::goal_accuracy",
+    ]);
     expect(c.columns.some((x) => x.name === "input")).toBe(true);
   });
 });
