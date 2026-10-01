@@ -161,7 +161,7 @@ export async function generateWithOpenAI(
     for (const s of samplers) {
       if (s.values.length === 0) continue;
       const pick =
-        s.name === "category" || s.name === "task"
+        s.name === "category" || s.name === "task" || s.name === "taskMetric"
           ? s.values[i % s.values.length]
           : s.values[Math.floor(Math.random() * s.values.length)];
       sample[s.name] = pick;

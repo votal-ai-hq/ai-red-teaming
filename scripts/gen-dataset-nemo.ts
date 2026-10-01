@@ -28,8 +28,12 @@ import {
   underFloor,
 } from "../lib/dataset/validate.js";
 import { resolveCategoryPool } from "../lib/dataset/category-set.js";
-import { resolveQualityPool } from "../lib/dataset/quality-set.js";
+import {
+  decodeQualityPair,
+  resolveQualityPool,
+} from "../lib/dataset/quality-set.js";
 import { seedsFromAnalysis, mergeSeeds } from "../lib/dataset/seed-from-analysis.js";
+import { resolveMcpGenerationContract } from "../lib/dataset/mcp-contract.js";
 import type { DatasetPreset, DatasetSeeds } from "../lib/dataset/types.js";
 import type { CodebaseAnalysis } from "../lib/types.js";
 
@@ -113,6 +117,10 @@ async function main(): Promise<void> {
     ? seedsFromAnalysis(loadJson<CodebaseAnalysis>(args.fromAnalysis))
     : undefined;
   const seeds = mergeSeeds(explicitSeeds, analysisSeeds);
+  const mcpContract =
+    preset.family === "mcp"
+      ? resolveMcpGenerationContract(preset, seeds)
+      : undefined;
   if (analysisSeeds) {
     console.log(
       `[gen] analysis seeds: roles=${analysisSeeds.roles?.length ?? 0} ` +
@@ -121,8 +129,13 @@ async function main(): Promise<void> {
   }
 
   const kind = preset.kind ?? "security";
+  if (kind === "quality" && preset.family === "mcp" && !mcpContract?.tools.length) {
+    throw new Error(
+      "MCP quality generation requires at least one declared tool; provide an MCP profile or seed from target analysis",
+    );
+  }
   // Resolve pool early so a bad preset fails before any network call.
-  const pool =
+  const requestedPool =
     kind === "quality"
       ? resolveQualityPool(preset.family, preset.tasks)
       : resolveCategoryPool(preset.family, preset.categories);
@@ -130,6 +143,18 @@ async function main(): Promise<void> {
     kind === "quality"
       ? buildQualityDataDesignerConfig(preset, seeds)
       : buildDataDesignerConfig(preset, seeds);
+  const axisName = kind === "quality"
+    ? preset.family === "mcp" ? "taskMetric" : "task"
+    : "category";
+  const axis = config.columns.find((column) => column.name === axisName);
+  const pool =
+    axis && "values" in axis
+      ? [...new Set(
+          axis.values
+            .map((value) => decodeQualityPair(value)?.task ?? value)
+            .filter(Boolean),
+        )]
+      : requestedPool;
   const client = new NemoDataDesignerClient();
 
   console.log(
@@ -144,9 +169,10 @@ async function main(): Promise<void> {
 
   const { valid, errors, histogram, duplicatesDropped } =
     kind === "quality"
-      ? validateQualityRows(recordsToQualityRows(records))
+      ? validateQualityRows(recordsToQualityRows(records), { mcpContract })
       : validateRows(recordsToRows(records, preset.family), {
           family: preset.family,
+          mcpContract,
         });
 
   console.log(`\n[gen] produced ${records.length} record(s)`);
