@@ -15,6 +15,16 @@ Usage:
   python3 scripts/litellm_guardrails_report_v2.py --base-url http://localhost:4000
   python3 scripts/litellm_guardrails_report_v2.py --model qwen3.5-27b
   python3 scripts/litellm_guardrails_report_v2.py --refine-bad-attacks --bad-limit 3
+
+Env vars (overridden by the matching CLI flag; read from the shell or a .env
+at the repo root):
+  LITELLM_BASE_URL     target proxy base URL              (--base-url)
+  LITELLM_ENDPOINT     chat-completions path              (--endpoint)
+  LITELLM_MODEL        target model name                  (--model)
+  LITELLM_GUARDRAILS   guardrail names, comma-separated   (--guardrail)
+  JUDGE_MODEL          Anthropic verdict-judge model      (--judge-model)
+  ATTACK_REFINE_MODEL  Anthropic attack-refine model      (--attack-refine-model)
+  ANTHROPIC_API_KEY    enables the LLM verdict judge (optional)
 """
 
 from __future__ import annotations
@@ -57,10 +67,16 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-DEFAULT_BASE_URL = "http://localhost:4000"
-DEFAULT_ENDPOINT = "/v1/chat/completions"
-DEFAULT_MODEL = "qwen3.5-27b"
-DEFAULT_GUARDRAILS = ["votal-input-guard", "votal-output-guard"]
+# Target endpoint and model are env-configurable (via shell env or the .env
+# loaded above). A CLI flag still overrides the env value.
+DEFAULT_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://localhost:4000")
+DEFAULT_ENDPOINT = os.environ.get("LITELLM_ENDPOINT", "/v1/chat/completions")
+DEFAULT_MODEL = os.environ.get("LITELLM_MODEL", "qwen3.5-27b")
+# Guardrail names: comma-separated LITELLM_GUARDRAILS, else the built-in pair.
+# Overridden by --guardrail flags.
+DEFAULT_GUARDRAILS = [
+    g.strip() for g in os.environ.get("LITELLM_GUARDRAILS", "").split(",") if g.strip()
+] or ["votal-input-guard", "votal-output-guard"]
 DEFAULT_TIMEOUT_SECONDS = 60
 REPORTS_DIR = Path("reports") / "litellm-guardrails"
 
@@ -330,7 +346,10 @@ def normalize_text(text: str) -> str:
 # LLM-based verdict judge (Anthropic)
 # ---------------------------------------------------------------------------
 
-DEFAULT_JUDGE_MODEL = "claude-opus-4-5-20251101"
+# Anthropic models are env-configurable (CLI flags still override).
+DEFAULT_JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "claude-opus-4-5-20251101")
+# Empty = reuse the judge model for attack refinement.
+DEFAULT_ATTACK_REFINE_MODEL = os.environ.get("ATTACK_REFINE_MODEL", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
 JUDGE_SYSTEM_PROMPT = """\
@@ -620,14 +639,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compare LiteLLM chat responses with and without guardrails."
     )
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help="Target proxy base URL. Env: LITELLM_BASE_URL. (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--endpoint",
+        default=DEFAULT_ENDPOINT,
+        help="Chat-completions path. Env: LITELLM_ENDPOINT. (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help="Target model name. Env: LITELLM_MODEL. (default: %(default)s)",
+    )
     parser.add_argument(
         "--guardrail",
         action="append",
         dest="guardrails",
-        help="Guardrail name to include. Pass multiple times to add more.",
+        help=(
+            "Guardrail name to include. Pass multiple times to add more. "
+            "Env: LITELLM_GUARDRAILS (comma-separated). "
+            f"(default: {DEFAULT_GUARDRAILS})"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -643,7 +678,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge-model",
         default=DEFAULT_JUDGE_MODEL,
-        help=f"Anthropic model to use as verdict judge (default: {DEFAULT_JUDGE_MODEL}).",
+        help=f"Anthropic verdict-judge model. Env: JUDGE_MODEL. (default: {DEFAULT_JUDGE_MODEL})",
     )
     parser.add_argument(
         "--no-llm-judge",
@@ -678,8 +713,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--attack-refine-model",
-        default="",
-        help="Anthropic model for attack refinement (default: same as --judge-model).",
+        default=DEFAULT_ATTACK_REFINE_MODEL,
+        help=(
+            "Anthropic model for attack refinement. Env: ATTACK_REFINE_MODEL. "
+            "(default: same as --judge-model)"
+        ),
     )
     parser.add_argument(
         "--refine-strategy-count",
