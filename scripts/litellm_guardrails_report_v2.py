@@ -299,15 +299,10 @@ GOOD_MESSAGES = [
 # Bad (harmful) prompts live in a sidecar JSONL file: one JSON-encoded string
 # per line. JSON encoding handles every apostrophe, quote, backslash, newline
 # and non-ASCII (e.g. Arabic) character, so no prompt can break the run.
-DEFAULT_BAD_PROMPTS_FILE = (
-    Path(__file__).resolve().parent.parent / "data" / "glm53-bad-prompts.jsonl"
-)
-
-
 def load_bad_messages(path: Path) -> list[str]:
     """Read bad prompts from a JSONL file (one JSON string per line)."""
     if not path.is_file():
-        return []
+        raise SystemExit(f"bad-prompts file not found: {path}")
     out: list[str] = []
     with open(path, encoding="utf-8") as f:
         for lineno, line in enumerate(f, start=1):
@@ -321,9 +316,6 @@ def load_bad_messages(path: Path) -> list[str]:
                 )
             out.append(value)
     return out
-
-
-BAD_MESSAGES: list[str] = load_bad_messages(DEFAULT_BAD_PROMPTS_FILE)
 
 
 @dataclass
@@ -700,8 +692,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--bad-prompts-file",
-        default=str(DEFAULT_BAD_PROMPTS_FILE),
-        help="JSONL file of bad prompts (one JSON string per line).",
+        required=True,
+        help="JSONL file of bad prompts (one JSON string per line). Required.",
     )
     parser.add_argument(
         "--refine-bad-attacks",
@@ -1361,14 +1353,16 @@ def main() -> int:
     guardrails = args.guardrails or list(DEFAULT_GUARDRAILS)
 
     # Optional target-proxy auth: flag, then env. Empty = open proxy (no failure).
+    # .strip() guards against stray whitespace/newlines pasted into env vars,
+    # which otherwise produce an "Invalid header value" when put in an HTTP header.
     target_api_key = (
         args.api_key
         or os.environ.get("LITELLM_API_KEY", "")
         or os.environ.get("OPENAI_API_KEY", "")
-    )
+    ).strip()
 
     # Configure LLM judge
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if args.no_llm_judge or not api_key:
         _use_llm_judge = False
         if not args.no_llm_judge and not api_key:
@@ -1382,6 +1376,8 @@ def main() -> int:
 
     good_msgs = GOOD_MESSAGES
     bad_msgs = load_bad_messages(Path(args.bad_prompts_file))
+    if not bad_msgs:
+        raise SystemExit(f"no prompts loaded from {args.bad_prompts_file} (file is empty?)")
     if args.good_limit and 0 < args.good_limit < len(GOOD_MESSAGES):
         good_msgs = random.sample(GOOD_MESSAGES, args.good_limit)
     if args.bad_limit and 0 < args.bad_limit < len(bad_msgs):
@@ -1398,7 +1394,7 @@ def main() -> int:
     if args.refine_bad_attacks and not api_key:
         print(
             "WARNING: --refine-bad-attacks requires ANTHROPIC_API_KEY; "
-            "using raw BAD_MESSAGES without LLM refinement."
+            "using raw bad prompts without LLM refinement."
         )
         print("")
     refine_rng = random.Random(args.refine_seed) if args.refine_seed else random.Random()
