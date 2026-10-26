@@ -47,6 +47,12 @@ describe("seedsFromAnalysis", () => {
     expect(seeds.surfaces?.some((s) => s.includes("read_file → send_email"))).toBe(true);
     expect(seeds.surfaces?.some((s) => s.includes("MCP prompt"))).toBe(true);
     expect(seeds.surfaces?.some((s) => s.includes("db://customers"))).toBe(true);
+    expect(seeds.mcpContract?.tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "send_email",
+    ]);
+    expect(seeds.mcpContract?.prompts).toEqual(["summarize"]);
+    expect(seeds.mcpContract?.resources).toEqual(["db://customers"]);
   });
 
   it("returns empty seeds for an empty analysis (falls back to defaults)", () => {
@@ -70,11 +76,12 @@ describe("seedsFromAnalysis", () => {
 describe("mergeSeeds", () => {
   it("unions two seed sets, primary first, deduped", () => {
     const merged = mergeSeeds(
-      { roles: ["admin"], surfaces: ["a"] },
-      { roles: ["admin", "viewer"], surfaces: ["b"] },
+      { roles: ["admin"], surfaces: ["a"], context: "primary context" },
+      { roles: ["admin", "viewer"], surfaces: ["b"], context: "secondary context" },
     );
     expect(merged?.roles).toEqual(["admin", "viewer"]);
     expect(merged?.surfaces).toEqual(["a", "b"]);
+    expect(merged?.context).toBe("primary context");
   });
 
   it("returns the other side when one is undefined", () => {

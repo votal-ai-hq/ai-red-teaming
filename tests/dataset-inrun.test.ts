@@ -45,7 +45,7 @@ const analysis = {
       name: "override_price",
       description: "Override a booking price",
       parameters:
-        '{"type":"object","properties":{"bookingId":{"type":"string"},"newAmountINR":{"type":"number"}}}',
+        '{"type":"object","properties":{"bookingId":{"type":"string"},"newAmountINR":{"type":"number"}},"required":["bookingId","newAmountINR"],"additionalProperties":false}',
     },
   ],
   roles: [],
@@ -63,7 +63,10 @@ describe("generateNemoDatasetInRun (Phase 3)", () => {
     const attacks = await generateNemoDatasetInRun(baseConfig(), {
       configDir: resolve("."),
       analysis,
-      fetchImpl: fakeFetch([goodRecord, { ...goodRecord, prompt: "another distinct misuse" }]),
+      fetchImpl: fakeFetch([
+        goodRecord,
+        { ...goodRecord, prompt: '{"bookingId":"BK-7002","newAmountINR":2}' },
+      ]),
     });
     expect(attacks.length).toBe(2);
     expect(attacks[0].category).toBe("tool_misuse");
@@ -83,6 +86,18 @@ describe("generateNemoDatasetInRun (Phase 3)", () => {
         configDir: resolve("."),
         analysis,
         fetchImpl: fakeFetch([{ category: "not_real", prompt: "x", severity: "high", grading: {} }]),
+      }),
+    ).rejects.toThrow(/zero valid rows/);
+  });
+
+  it("rejects generated arguments that violate the discovered tool schema", async () => {
+    await expect(
+      generateNemoDatasetInRun(baseConfig(), {
+        configDir: resolve("."),
+        analysis,
+        fetchImpl: fakeFetch([
+          { ...goodRecord, prompt: '{"bookingId":"BK-7001"}' },
+        ]),
       }),
     ).rejects.toThrow(/zero valid rows/);
   });

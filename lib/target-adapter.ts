@@ -19,6 +19,7 @@ import {
   summarizeCapabilityProbe,
 } from "./mcp/capability-probe.js";
 import { diffMcpMetadata } from "./mcp/metadata-poisoning.js";
+import type { McpToolDescriptor } from "./mcp/types.js";
 
 /**
  * When an MCP tools/call fails schema validation (JSON-RPC -32602 "Invalid
@@ -97,6 +98,8 @@ export interface TargetSurfaceSummary {
   protocolVersion?: string;
   capabilities?: string[];
   tools?: string[];
+  /** Full descriptors retained for contract-aware dataset generation. */
+  toolDescriptors?: McpToolDescriptor[];
   prompts?: string[];
   resources?: string[];
   resourceTemplates?: string[];
@@ -473,6 +476,7 @@ class McpTargetAdapter implements TargetAdapter {
       protocolVersion: result.protocolVersion,
       capabilities: result.capabilities,
       tools: (result.tools || []).map((tool) => tool.name),
+      toolDescriptors: result.tools || [],
       prompts: (result.prompts || []).map((prompt) => prompt.name),
       resources: (result.resources || []).map((resource) => resource.uri),
       resourceTemplates: (result.resourceTemplates || []).map(
