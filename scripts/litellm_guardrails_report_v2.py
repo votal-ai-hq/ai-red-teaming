@@ -22,6 +22,7 @@ at the repo root):
   LITELLM_ENDPOINT     chat-completions path              (--endpoint)
   LITELLM_MODEL        target model name                  (--model)
   LITELLM_GUARDRAILS   guardrail names, comma-separated   (--guardrail)
+  LITELLM_API_KEY      target proxy bearer token; optional, open if unset  (--api-key)
   JUDGE_MODEL          Anthropic verdict-judge model      (--judge-model)
   ATTACK_REFINE_MODEL  Anthropic attack-refine model      (--attack-refine-model)
   ANTHROPIC_API_KEY    enables the LLM verdict judge (optional)
@@ -731,6 +732,15 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="RNG seed for strategy sampling / persona rotation (0 = nondeterministic).",
     )
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help=(
+            "Bearer token for the target proxy. Env: LITELLM_API_KEY, then "
+            "OPENAI_API_KEY. Optional — if unset, requests go out unauthenticated "
+            "(open proxy) and the run does not fail for lack of a key."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -776,12 +786,22 @@ def shorten(text: str, limit: int = 220) -> str:
     return compact[: limit - 3] + "..."
 
 
-def post_json(url: str, payload: dict[str, Any], timeout: int) -> tuple[int, Any, str | None, int]:
+def post_json(
+    url: str,
+    payload: dict[str, Any],
+    timeout: int,
+    api_key: str | None = None,
+) -> tuple[int, Any, str | None, int]:
     data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    # Optional target-proxy auth: send a Bearer token only when one is given.
+    # When absent, the request goes out unauthenticated (open proxy) — v1 behavior.
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     request = Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     start = time.perf_counter()
@@ -822,9 +842,10 @@ def run_case(
     category: str,
     guardrails: list[str] | None,
     timeout: int,
+    api_key: str | None = None,
 ) -> CaseResult:
     payload = make_payload(model, message, guardrails)
-    status_code, raw_body, error, latency_ms = post_json(url, payload, timeout)
+    status_code, raw_body, error, latency_ms = post_json(url, payload, timeout, api_key)
     response_text = extract_text(raw_body)
     return CaseResult(
         category=category,
@@ -1339,6 +1360,13 @@ def main() -> int:
     url = f"{base_url}{args.endpoint}"
     guardrails = args.guardrails or list(DEFAULT_GUARDRAILS)
 
+    # Optional target-proxy auth: flag, then env. Empty = open proxy (no failure).
+    target_api_key = (
+        args.api_key
+        or os.environ.get("LITELLM_API_KEY", "")
+        or os.environ.get("OPENAI_API_KEY", "")
+    )
+
     # Configure LLM judge
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if args.no_llm_judge or not api_key:
@@ -1393,6 +1421,7 @@ def main() -> int:
     print(f"URL: {url}")
     print(f"Model: {args.model}")
     print(f"Guardrails: {guardrails}")
+    print(f"Target auth: {'on' if target_api_key else 'off (open proxy)'}")
     print(f"Verdict judge: {judge_label}")
     print(f"Prompts: {len(prompts)}")
     print("")
@@ -1412,6 +1441,7 @@ def main() -> int:
                 category="bad",
                 guardrails=None,
                 timeout=args.timeout,
+                api_key=target_api_key,
             )
             probe_kind = classify_result(probe)
             if probe_kind == "harmful_compliance":
@@ -1452,6 +1482,7 @@ def main() -> int:
                 category=category,
                 guardrails=None,
                 timeout=args.timeout,
+                api_key=target_api_key,
             )
         with_gr = run_case(
             url=url,
@@ -1460,6 +1491,7 @@ def main() -> int:
             category=category,
             guardrails=guardrails,
             timeout=args.timeout,
+            api_key=target_api_key,
         )
         print(
             "  without guardrails:"
