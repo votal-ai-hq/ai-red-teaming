@@ -775,7 +775,7 @@ def shorten(text: str, limit: int = 220) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
         return compact
-    return compact[: limit - 3] + "..."
+    return compact[: -1]
 
 
 def post_json(
