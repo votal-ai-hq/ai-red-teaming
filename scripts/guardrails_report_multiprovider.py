@@ -71,6 +71,11 @@ _load_dotenv()
 # Target endpoint and model are env-configurable (via shell env or the .env
 # loaded above). A CLI flag still overrides the env value.
 DEFAULT_BASE_URL = os.environ.get("TARGET_BASE_URL", "http://localhost:4000")
+# Optional separate base URL for the guarded path. When set (two-endpoint mode),
+# the guarded call hits this URL with a plain body — the endpoint enforces guardrails
+# itself, so no `guardrails` body field is sent. Unset = single-endpoint mode (one URL,
+# guarded call adds the `guardrails` body field).
+DEFAULT_GUARDRAILS_BASE_URL = os.environ.get("TARGET_GUARDRAILS_BASE_URL", "")
 DEFAULT_ENDPOINT = os.environ.get("TARGET_ENDPOINT", "/v1/chat/completions")
 DEFAULT_MODEL = os.environ.get("TARGET_MODEL", "qwen3.5-27b")
 # Target API shape: "openai" (OpenAI/OpenRouter/vLLM/Rafay) or
@@ -591,6 +596,16 @@ def parse_args() -> argparse.Namespace:
         "--base-url",
         default=DEFAULT_BASE_URL,
         help="Target proxy base URL. Env: TARGET_BASE_URL. (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--guardrails-base-url",
+        default=DEFAULT_GUARDRAILS_BASE_URL,
+        help=(
+            "Separate base URL for the guarded path (two-endpoint mode). When set, the "
+            "guarded call hits this URL with a plain body (endpoint enforces guardrails; "
+            "no body field sent) and --base-url is the no-guardrails path. Unset = one URL "
+            "+ guardrails body field. Env: TARGET_GUARDRAILS_BASE_URL."
+        ),
     )
     parser.add_argument(
         "--endpoint",
@@ -1343,6 +1358,7 @@ def write_reports(
     raw_payload = {
       "created_at": created_at,
       "base_url": normalize_base_url(args.base_url),
+      "guardrails_base_url": (args.guardrails_base_url or "").strip() or None,
       "endpoint": args.endpoint,
       "model": args.model,
       "guardrails": args.guardrails or DEFAULT_GUARDRAILS,
@@ -1376,6 +1392,17 @@ def main() -> int:
         endpoint = DEFAULT_ANTHROPIC_ENDPOINT
     url = f"{base_url}{endpoint}"
     guardrails = args.guardrails or list(DEFAULT_GUARDRAILS)
+
+    # Two-endpoint mode: a separate guarded base URL means the guarded call hits that
+    # URL with a plain body (the endpoint enforces guardrails). Otherwise single-endpoint
+    # mode: guarded call reuses `url` and adds the `guardrails` body field.
+    guardrails_base_url = (args.guardrails_base_url or "").strip()
+    if guardrails_base_url:
+        guarded_url = f"{normalize_base_url(guardrails_base_url)}{endpoint}"
+        guarded_field = None
+    else:
+        guarded_url = url
+        guarded_field = guardrails
 
     # Optional target auth: flag, then env. Empty = open proxy (no failure).
     # .strip() guards against stray whitespace/newlines pasted into env vars,
@@ -1442,11 +1469,17 @@ def main() -> int:
 
     judge_label = f"LLM ({_judge_model})" if _use_llm_judge else "regex (fallback)"
     print("Guardrail comparison")
-    print(f"URL: {url}")
+    if guardrails_base_url:
+        print(f"Baseline URL (no guardrails): {url}")
+        print(f"Guarded URL (guardrails):     {guarded_url}")
+    else:
+        print(f"URL: {url}")
     print(f"Provider: {provider}")
     print(f"Model: {args.model}")
     if provider == "anthropic":
         print("Guardrails: n/a (native Anthropic target — guardrails field not sent)")
+    elif guardrails_base_url:
+        print("Guardrails: enforced by the guarded endpoint (no body field sent)")
     else:
         print(f"Guardrails: {guardrails}")
     print(f"Target auth: {'on' if target_api_key else 'off (open proxy)'}")
@@ -1515,11 +1548,11 @@ def main() -> int:
                 max_tokens=args.max_tokens,
             )
         with_gr = run_case(
-            url=url,
+            url=guarded_url,
             model=args.model,
             message=message,
             category=category,
-            guardrails=guardrails,
+            guardrails=guarded_field,
             timeout=args.timeout,
             api_key=target_api_key,
             provider=provider,
