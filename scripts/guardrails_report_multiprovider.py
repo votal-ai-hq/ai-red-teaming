@@ -868,6 +868,7 @@ def run_case(
     api_key: str | None = None,
     provider: str = "openai",
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    guarded: bool = False,
 ) -> CaseResult:
     payload = make_payload(model, message, guardrails, provider, max_tokens)
     status_code, raw_body, error, latency_ms = post_json(
@@ -877,7 +878,10 @@ def run_case(
     return CaseResult(
         category=category,
         message=message,
-        use_guardrails=bool(guardrails),
+        # True whenever this call exercised the guarded path — via the guardrails
+        # body field (single-endpoint mode) OR by routing to the shield URL
+        # (two-endpoint mode, where no body field is sent). Reflects what was done.
+        use_guardrails=guarded or bool(guardrails),
         status_code=status_code,
         latency_ms=latency_ms,
         response_text=response_text,
@@ -1557,6 +1561,7 @@ def main() -> int:
             api_key=target_api_key,
             provider=provider,
             max_tokens=args.max_tokens,
+            guarded=True,
         )
         print(
             "  without guardrails:"
