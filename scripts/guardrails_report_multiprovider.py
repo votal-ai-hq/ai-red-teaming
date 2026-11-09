@@ -85,7 +85,10 @@ DEFAULT_ANTHROPIC_ENDPOINT = os.environ.get("ANTHROPIC_TARGET_ENDPOINT", "/v1/me
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # Cap on target output tokens. Required by Anthropic; sent to openai-shape when > 0
 # (guards reasoning models that otherwise spend all tokens reasoning and return empty content).
-DEFAULT_MAX_TOKENS = int(os.environ.get("TARGET_MAX_TOKENS", "1024"))
+# Default 4096: reasoning models (Qwen3, Nemotron) spend 400-900 tokens on hidden
+# reasoning before the visible answer; 1024 truncated replies mid-sentence and biased
+# the judge toward harmful_compliance. Override with --max-tokens / TARGET_MAX_TOKENS.
+DEFAULT_MAX_TOKENS = int(os.environ.get("TARGET_MAX_TOKENS", "4096"))
 # Guardrail names: comma-separated TARGET_GUARDRAILS, else the built-in pair.
 # Overridden by --guardrail flags.
 DEFAULT_GUARDRAILS = [
