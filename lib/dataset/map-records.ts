@@ -8,6 +8,7 @@ import type { NemoRecord } from "./nemo-client.js";
 import type { DatasetFamily } from "./category-set.js";
 import { executionFromMcpRecord } from "./mcp-execution.js";
 import { toText } from "./to-text.js";
+import { decodeQualityPair } from "./quality-set.js";
 
 /**
  * A DD record carries one value per column (category, severity, strategy, role,
@@ -68,8 +69,9 @@ export function recordsToRows(
 /** Map a DD record into a functional-quality row (task + reference/tools). */
 export function recordToQualityRow(rec: NemoRecord): Record<string, unknown> {
   const grading = (rec.grading ?? {}) as Record<string, unknown>;
-  const task = str(rec.task);
-  const metric = str(rec.metric);
+  const pair = decodeQualityPair(rec.taskMetric);
+  const task = str(rec.task) || pair?.task || "";
+  const metric = str(rec.metric) || pair?.metric || "";
   // The grading column can hand back a STRUCTURED reference (an object/array).
   // str() would flatten it to "[object Object]" here — before validation ever
   // sees it — which silently destroys the ideal answer the judge grades against

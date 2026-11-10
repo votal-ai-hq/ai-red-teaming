@@ -48,6 +48,22 @@ export interface QualityRow {
   note?: string;
 }
 
+/** A discovered MCP tool contract used to validate generated direct calls. */
+export interface McpDatasetToolContract {
+  name: string;
+  inputSchema?: Record<string, unknown>;
+  /** Set when discovery returned schema text that could not be parsed safely. */
+  schemaError?: string;
+}
+
+/** Structured MCP surface captured at discovery/profile ingestion time. */
+export interface McpDatasetContract {
+  tools: McpDatasetToolContract[];
+  prompts: string[];
+  resources: string[];
+  roles: string[];
+}
+
 /**
  * A generation preset — the tuning knobs. Lives as JSON under
  * `configs/datasets/*.preset.json`.
@@ -114,6 +130,8 @@ export interface DatasetPreset {
 export interface DatasetSeeds {
   roles?: string[];
   surfaces?: string[];
+  /** Machine-readable surface used by the post-generation contract gate. */
+  mcpContract?: McpDatasetContract;
   /**
    * App-context preamble injected into the generation prompt so generated
    * attacks/grading reference the target's real domain, rules, and data.

@@ -22,6 +22,7 @@ import { NemoDataDesignerClient } from "./../dataset/nemo-client.js";
 import { recordsToRows } from "./../dataset/map-records.js";
 import { validateRows } from "./../dataset/validate.js";
 import { seedsFromAnalysis } from "./../dataset/seed-from-analysis.js";
+import { resolveMcpGenerationContract } from "./../dataset/mcp-contract.js";
 import type { DatasetPreset } from "./../dataset/types.js";
 import { attacksFromCustomRows } from "../custom-attacks-loader.js";
 
@@ -80,6 +81,10 @@ export async function generateNemoDatasetInRun(
   const rows = recordsToRows(records, preset.family);
   const { valid, errors, duplicatesDropped } = validateRows(rows, {
     family: preset.family,
+    mcpContract:
+      preset.family === "mcp"
+        ? resolveMcpGenerationContract(preset, seeds)
+        : undefined,
   });
   if (errors.length > 0) {
     log(`nemo dropped ${errors.length} invalid row(s); kept ${valid.length}`);

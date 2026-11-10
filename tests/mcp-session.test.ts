@@ -353,6 +353,19 @@ describe("MCP session", () => {
     expect(surface.resources).toHaveLength(1);
   });
 
+  it("retains tool schemas in the adapter surface summary", async () => {
+    const adapter = getTargetAdapter(makeMcpConfig());
+    const surface = await adapter?.discoverSurface?.(makeMcpConfig());
+    expect(surface?.tools).toEqual(["read_secret"]);
+    expect(surface?.toolDescriptors?.[0]).toMatchObject({
+      name: "read_secret",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+      },
+    });
+  });
+
   it("executes generic MCP tool calls via the adapter", async () => {
     const config = makeMcpConfig();
     const adapter = getTargetAdapter(config);

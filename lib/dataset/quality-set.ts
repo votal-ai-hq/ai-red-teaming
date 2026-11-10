@@ -130,3 +130,96 @@ export function defaultMetrics(family: DatasetFamily): QualityMetric[] {
     ? ["tool_call_accuracy", "goal_accuracy", "topic_adherence"]
     : ["goal_accuracy", "faithfulness", "answer_relevancy", "exact_match"];
 }
+
+const MCP_TASK_METRICS: Partial<Record<string, readonly QualityMetric[]>> = {
+  goal_completion: ["goal_accuracy"],
+  multi_step_task: ["goal_accuracy", "tool_call_accuracy"],
+  tool_selection: ["tool_call_accuracy"],
+};
+
+const MCP_UNMEASURABLE_TASKS: Record<string, string> = {
+  parameter_extraction:
+    "the current result model does not capture expected arguments",
+  tool_argument_accuracy:
+    "the current result model records tool names but not arguments",
+};
+
+export const QUALITY_PAIR_SEPARATOR = "::";
+
+export interface QualityTaskMetricPair {
+  task: string;
+  metric: QualityMetric;
+}
+
+export function mcpQualityTaskIssue(task: string): string | undefined {
+  return MCP_UNMEASURABLE_TASKS[task];
+}
+
+export function isMcpTaskMetricCompatible(
+  task: string,
+  metric: string,
+): boolean {
+  const allowed = MCP_TASK_METRICS[task];
+  return !allowed || allowed.includes(metric as QualityMetric);
+}
+
+/**
+ * Build only task/metric pairs the native MCP scorer can observe. Independent
+ * task and metric samplers create invalid cross-products, so MCP generation
+ * samples these pairs as one atomic value.
+ */
+export function resolveMcpQualityPairs(
+  tasks: string[],
+  metrics: string[],
+  explicitTasks: boolean,
+): QualityTaskMetricPair[] {
+  const unknownMetrics = metrics.filter((metric) => !isQualityMetric(metric));
+  if (unknownMetrics.length > 0) {
+    throw new Error(`quality metric pool has unknown metrics: ${unknownMetrics.join(", ")}`);
+  }
+
+  const unmeasurable = tasks.filter((task) => mcpQualityTaskIssue(task));
+  if (explicitTasks && unmeasurable.length > 0) {
+    const details = unmeasurable
+      .map((task) => `${task} (${mcpQualityTaskIssue(task)})`)
+      .join(", ");
+    throw new Error(`MCP quality generation cannot score: ${details}`);
+  }
+
+  const pairs: QualityTaskMetricPair[] = [];
+  const tasksWithoutMetric: string[] = [];
+  for (const task of tasks.filter((candidate) => !mcpQualityTaskIssue(candidate))) {
+    const compatible = metrics.filter((metric) =>
+      isMcpTaskMetricCompatible(task, metric),
+    ) as QualityMetric[];
+    if (compatible.length === 0) {
+      tasksWithoutMetric.push(task);
+      continue;
+    }
+    for (const metric of compatible) pairs.push({ task, metric });
+  }
+  if (tasksWithoutMetric.length > 0) {
+    throw new Error(
+      `MCP quality tasks have no compatible requested metric: ${tasksWithoutMetric.join(", ")}`,
+    );
+  }
+  if (pairs.length === 0) {
+    throw new Error("MCP quality generation has no measurable task/metric pairs");
+  }
+  return pairs;
+}
+
+export function encodeQualityPair(pair: QualityTaskMetricPair): string {
+  return `${pair.task}${QUALITY_PAIR_SEPARATOR}${pair.metric}`;
+}
+
+export function decodeQualityPair(
+  value: unknown,
+): QualityTaskMetricPair | undefined {
+  if (typeof value !== "string") return undefined;
+  const [task, metric, extra] = value.split(QUALITY_PAIR_SEPARATOR);
+  if (extra !== undefined || !task || !isQualityMetric(metric ?? "")) {
+    return undefined;
+  }
+  return { task, metric: metric as QualityMetric };
+}

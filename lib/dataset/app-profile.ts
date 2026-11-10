@@ -16,6 +16,7 @@
  * profile-store.ts). This module has NO filesystem access so it stays testable.
  */
 import type { DatasetSeeds } from "./types.js";
+import { mcpToolContract } from "./mcp-contract.js";
 
 export interface ProfileTool {
   name: string;
@@ -261,6 +262,14 @@ export function profileToSeeds(profile: AppProfile): DatasetSeeds {
     (a, b) => Number(Boolean(b.sensitive)) - Number(Boolean(a.sensitive)),
   );
   if (tools.length) seeds.surfaces = tools.map(toolSurface);
+  if (tools.length) {
+    seeds.mcpContract = {
+      tools: tools.map((tool) => mcpToolContract(tool.name, tool.inputSchema)),
+      prompts: [],
+      resources: [],
+      roles: [...(profile.roles ?? [])],
+    };
+  }
 
   const context = profileToContext(profile);
   if (context) seeds.context = context;

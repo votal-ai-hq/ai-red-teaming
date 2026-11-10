@@ -74,7 +74,8 @@ function summarizeFile(root: string, absPath: string): DatasetSummary | null {
     return null;
   }
   if (!Array.isArray(rows)) return null;
-  return summarizeRows(relative(root, absPath), rows, statSync(absPath).size);
+  const relPath = relative(root, absPath).replaceAll("\\", "/");
+  return summarizeRows(relPath, rows, statSync(absPath).size);
 }
 
 /**
