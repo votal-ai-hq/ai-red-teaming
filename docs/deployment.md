@@ -41,7 +41,7 @@ CLERK_PUBLISHABLE_KEY=pk_live_...
 docker compose up -d
 ```
 
-Deploy anywhere — AWS, GCP, Azure, Railway, on-prem, or any environment that runs Docker + Postgres.
+Deploy anywhere — AWS, GCP, Azure, Railway, on-prem, or any environment that runs Docker + Postgres. For on-prem setups (Compose or OpenShift, model access, corporate proxy), see [On-prem deployment]({{ site.baseurl }}/on-prem/).
 
 **Prerequisites:** Docker runtime, Postgres 13+, OIDC identity provider (Clerk, Okta, Azure AD, Auth0, Keycloak).
 
@@ -133,7 +133,7 @@ oc rollout restart deployment/wb-red-team
 | `DATABASE_URL`             | No                | Postgres connection. Enables enterprise features |
 | `MASTER_ENCRYPTION_KEY`    | With DB           | 64 hex chars. Encrypts report data at rest       |
 | `AUTH_MODE`                | No                | `dev` = no login required. `simple` = cookie login. Omit for OIDC auth |
-| `SIGNUP_ENABLED`           | No                | `true` = self-service email sign-up ([details](self-signup.md)) |
+| `SIGNUP_ENABLED`           | No                | `true` = self-service email sign-up ([details]({{ site.baseurl }}/self-signup/)) |
 | `CLERK_PUBLISHABLE_KEY`    | No                | Clerk publishable key for browser SSO            |
 | `MAX_CONCURRENT_RUNS`      | No                | Max parallel scans (default: 100)                |
 
