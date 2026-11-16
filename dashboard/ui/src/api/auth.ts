@@ -12,6 +12,27 @@ export function login(username: string, password: string, captchaToken?: string)
   });
 }
 
+export function signup(email: string, name: string, captchaToken?: string) {
+  return apiFetch<{ ok: true }>("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify({ email, name: name || undefined, captchaToken }),
+  });
+}
+
+export function forgotPassword(email: string, captchaToken?: string) {
+  return apiFetch<{ ok: true }>("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email, captchaToken }),
+  });
+}
+
+export function setPassword(token: string, password: string) {
+  return apiFetch<{ user: AuthUser }>("/api/auth/set-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 export function logout() {
   return apiFetch<void>("/api/auth/logout", { method: "POST" });
 }

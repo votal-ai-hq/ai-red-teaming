@@ -138,8 +138,17 @@ import {
   buildSimpleLogoutCookie,
   buildSimpleSessionCookie,
   getSimpleSessionUser,
+  issueAccountSession,
   loginSimpleUser,
 } from "../lib/auth-simple.js";
+import {
+  isSignupEnabled,
+  isValidEmail,
+  normalizeEmail,
+  passwordProblem,
+  requestEmailLink,
+  setPasswordWithLink,
+} from "../lib/auth-signup.js";
 import {
   storeGuardrailReport,
   getGuardrailReport,
@@ -211,6 +220,28 @@ setInterval(() => {
     if (entry.resetAt <= now) apiRateLimits.delete(key);
   }
 }, 60_000).unref();
+
+/**
+ * hCaptcha check for public auth forms, when HCAPTCHA_SECRET_KEY and
+ * HCAPTCHA_SITE_KEY are set. Returns an error response (status + message) or null.
+ */
+async function verifyCaptcha(
+  captchaToken: unknown,
+): Promise<{ status: number; error: string } | null> {
+  const hcaptchaSecret = process.env.HCAPTCHA_SECRET_KEY;
+  if (!hcaptchaSecret || !process.env.HCAPTCHA_SITE_KEY) return null;
+  const token = String(captchaToken || "");
+  if (!token) return { status: 400, error: "CAPTCHA verification required" };
+  const verifyResp = await fetch("https://api.hcaptcha.com/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `response=${encodeURIComponent(token)}&secret=${encodeURIComponent(hcaptchaSecret)}`,
+  });
+  const verifyData = (await verifyResp.json()) as { success: boolean };
+  return verifyData.success
+    ? null
+    : { status: 403, error: "CAPTCHA verification failed" };
+}
 
 function checkApiRateLimit(
   ip: string,
@@ -396,6 +427,7 @@ function compareReportMetaDesc(a: ReportMeta, b: ReportMeta): number {
 async function loadReportRecord(
   filename: string,
   tenantId?: string,
+  allowDiskFallback = true,
 ): Promise<LoadedReportRecord | null> {
   if (tenantId && isDbConfigured()) {
     try {
@@ -413,6 +445,7 @@ async function loadReportRecord(
     }
   }
 
+  if (!allowDiskFallback) return null;
   try {
     const raw = readFileSync(join(REPORT_DIR, filename), "utf-8");
     return {
@@ -541,6 +574,8 @@ interface Job {
   abortController?: AbortController;
   tenantId?: string;
   userId?: string;
+  /** Started by a self-signup account: its reports never go to the shared disk store. */
+  selfSignup?: boolean;
   estimatedTotal?: number;
   /** Once set, the job is permanently cancelled — status reads always return "cancelled". */
   _cancelled?: boolean;
@@ -593,6 +628,69 @@ function rejectMcpStdioIfDisabled(config: Config, res: ServerResponse): boolean 
   return false;
 }
 
+/**
+ * Self-signup accounts (open email sign-up) are untrusted and each has its own
+ * tenant. They never see or write the instance-wide disk stores (legacy file
+ * reports, LiteLLM uploads, profiles, uploaded policies), which carry no tenant,
+ * and can't point runs at server-side paths.
+ */
+function isSelfSignup(ctx: RequestContext | null): boolean {
+  return !!ctx?.selfSignup;
+}
+
+/** In DB mode an in-memory job is visible only to the tenant that started it. */
+function canAccessJob(job: Job, ctx: RequestContext | null): boolean {
+  return !isDbConfigured() || (!!ctx && job.tenantId === ctx.tenantId);
+}
+
+function getJobForCtx(id: string, ctx: RequestContext | null): Job | undefined {
+  const job = jobs.get(id);
+  return job && canAccessJob(job, ctx) ? job : undefined;
+}
+
+/** Policies shipped in policies/. Uploaded ones live alongside them and aren't offered to self-signup accounts. */
+const BUILTIN_POLICIES = new Set([
+  "default.json",
+  "mcp-strict.json",
+  "safety-classifier.json",
+  "strict.json",
+]);
+
+function isBuiltinPolicyPath(policyFile: string): boolean {
+  const name = basename(policyFile);
+  return (
+    BUILTIN_POLICIES.has(name) &&
+    resolvePath(policyFile) === resolvePath("policies", name)
+  );
+}
+
+/** Reject run options that read server files or spawn processes, for self-signup accounts. Returns true if handled. */
+function rejectServerAccessForSelfSignup(
+  config: Config,
+  ctx: RequestContext | null,
+  res: ServerResponse,
+): boolean {
+  if (!isSelfSignup(ctx)) return false;
+  const blocked: string[] = [];
+  if (config.codebasePath) blocked.push("codebasePath (use codebaseRepo)");
+  if (config.customAttacksFile) blocked.push("customAttacksFile (use a saved dataset)");
+  if (config.policyFile && !isBuiltinPolicyPath(config.policyFile)) {
+    blocked.push("policyFile (only built-in policies)");
+  }
+  if (config.target.type === "mcp" && config.target.mcp?.transport === "stdio") {
+    blocked.push("MCP stdio transport (use Streamable HTTP)");
+  }
+  if (blocked.length === 0) return false;
+  res.writeHead(400, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify({
+      error: "Option not available for this account",
+      detail: `Not allowed: ${blocked.join(", ")}`,
+    }),
+  );
+  return true;
+}
+
 // ── Run config persistence (file-based fallback when no DB) ──
 const RUN_CONFIGS_PATH = join(
   import.meta.dirname ?? ".",
@@ -630,9 +728,9 @@ function deleteRunConfig(runId: string): void {
 }
 
 async function loadRunConfig(runId: string, tenantId?: string): Promise<Config | null> {
-  // Try in-memory first
+  // Try in-memory first (in DB mode, only the tenant's own jobs)
   const job = jobs.get(runId);
-  if (job) return job.config;
+  if (job && (!isDbConfigured() || job.tenantId === tenantId)) return job.config;
 
   // Try DB
   if (isDbConfigured() && tenantId) {
@@ -647,7 +745,8 @@ async function loadRunConfig(runId: string, tenantId?: string): Promise<Config |
     } catch {}
   }
 
-  // Try file-based store
+  // Try file-based store (no tenant, so never in DB mode)
+  if (isDbConfigured()) return null;
   try {
     if (existsSync(RUN_CONFIGS_PATH)) {
       const store = JSON.parse(readFileSync(RUN_CONFIGS_PATH, "utf-8"));
@@ -748,12 +847,16 @@ async function startJob(job: Job): Promise<void> {
           );
         } catch (dbErr) {
           console.error("Failed to store report in DB:", dbErr);
-          try {
-            const { writeReport } = await import("../lib/report-generator.js");
-            const paths = writeReport(result.report);
-            job.reportFile = paths.jsonPath;
-            console.log(`  Fallback: report written to file ${paths.jsonPath}`);
-          } catch {}
+          if (job.selfSignup) {
+            console.error(`  Report for self-signup tenant ${job.tenantId} not written to shared disk`);
+          } else {
+            try {
+              const { writeReport } = await import("../lib/report-generator.js");
+              const paths = writeReport(result.report);
+              job.reportFile = paths.jsonPath;
+              console.log(`  Fallback: report written to file ${paths.jsonPath}`);
+            } catch {}
+          }
         }
       } else {
         try {
@@ -863,10 +966,12 @@ async function startJob(job: Job): Promise<void> {
                 });
                 console.log(`  Partial report stored: ${sr.reportId}`);
               } catch (dbErr) {
-                try {
-                  const paths = writeReport(report);
-                  job.reportFile = paths.jsonPath;
-                } catch {}
+                if (!job.selfSignup) {
+                  try {
+                    const paths = writeReport(report);
+                    job.reportFile = paths.jsonPath;
+                  } catch {}
+                }
               }
             } else {
               try {
@@ -995,6 +1100,7 @@ function enqueueJob(config: Config, ctx?: RequestContext | null): Job {
     startedAt: new Date().toISOString(),
     tenantId: ctx?.tenantId,
     userId: ctx?.userId,
+    selfSignup: ctx?.selfSignup,
     estimatedTotal,
   };
   jobs.set(job.id, job);
@@ -1043,6 +1149,7 @@ const server = createServer(
           mode: authMode,
           clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY || null,
           hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY || null,
+          signupEnabled: isSignupEnabled(),
         }),
       );
       return;
@@ -1081,25 +1188,11 @@ const server = createServer(
         const password = String(body.password || "");
 
         // hCaptcha verification (when configured)
-        const hcaptchaSecret = process.env.HCAPTCHA_SECRET_KEY;
-        if (hcaptchaSecret && process.env.HCAPTCHA_SITE_KEY) {
-          const captchaToken = String(body.captchaToken || "");
-          if (!captchaToken) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "CAPTCHA verification required" }));
-            return;
-          }
-          const verifyResp = await fetch("https://api.hcaptcha.com/siteverify", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `response=${encodeURIComponent(captchaToken)}&secret=${encodeURIComponent(hcaptchaSecret)}`,
-          });
-          const verifyData = (await verifyResp.json()) as { success: boolean };
-          if (!verifyData.success) {
-            res.writeHead(403, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "CAPTCHA verification failed" }));
-            return;
-          }
+        const captchaError = await verifyCaptcha(body.captchaToken);
+        if (captchaError) {
+          res.writeHead(captchaError.status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: captchaError.error }));
+          return;
         }
 
         const { token, user } = await loginSimpleUser(username, password);
@@ -1133,6 +1226,107 @@ const server = createServer(
         res.end(
           JSON.stringify({
             error: "Invalid username or password",
+          }),
+        );
+      }
+      return;
+    }
+
+    // ── Self-service sign-up (lib/auth-signup.ts) ──
+    // signup / forgot-password email a one-time link; set-password uses it.
+    if (
+      (url.pathname === "/api/auth/signup" ||
+        url.pathname === "/api/auth/forgot-password" ||
+        url.pathname === "/api/auth/set-password") &&
+      req.method === "POST"
+    ) {
+      if (!isSignupEnabled()) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Sign-up is not enabled" }));
+        return;
+      }
+      const clientIp =
+        req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
+        req.socket.remoteAddress ||
+        "unknown";
+      const { allowed, retryAfterSec } = checkApiRateLimit(clientIp, "signup");
+      if (!allowed) {
+        res.writeHead(429, {
+          "Content-Type": "application/json",
+          "Retry-After": String(retryAfterSec),
+        });
+        res.end(
+          JSON.stringify({
+            error: "Too many requests. Please try again later.",
+            retryAfterSec,
+          }),
+        );
+        return;
+      }
+
+      try {
+        const body = JSON.parse(await readBody(req));
+
+        if (url.pathname === "/api/auth/set-password") {
+          const password = String(body.password || "");
+          const problem = passwordProblem(password);
+          if (problem) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: problem }));
+            return;
+          }
+          const account = await setPasswordWithLink(String(body.token || ""), password);
+          if (!account) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "This link is invalid or has expired" }));
+            return;
+          }
+          const { token, user } = issueAccountSession(account);
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Set-Cookie": buildSimpleSessionCookie(token),
+          });
+          res.end(JSON.stringify({ ok: true, user }));
+          return;
+        }
+
+        const captchaError = await verifyCaptcha(body.captchaToken);
+        if (captchaError) {
+          res.writeHead(captchaError.status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: captchaError.error }));
+          return;
+        }
+        const email = normalizeEmail(String(body.email || ""));
+        if (!isValidEmail(email)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Enter a valid email address" }));
+          return;
+        }
+        if (url.pathname === "/api/auth/signup") {
+          const name = typeof body.name === "string" ? body.name : undefined;
+          await requestEmailLink(email, "signup", name);
+        } else {
+          await requestEmailLink(email, "reset");
+        }
+        // Same answer whether or not an account exists.
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, status: "check_your_email" }));
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid request body" }));
+          return;
+        }
+        console.error(
+          `  [auth] ${url.pathname} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        const transient = isTransientDbError(err);
+        res.writeHead(transient ? 503 : 500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: transient
+              ? "Service temporarily unavailable. Please try again."
+              : "Something went wrong. Please try again.",
           }),
         );
       }
@@ -1203,6 +1397,7 @@ const server = createServer(
         // Safety gate: never run an MCP stdio target (arbitrary local process)
         // on a shared instance unless explicitly enabled.
         if (rejectMcpStdioIfDisabled(config, res)) return;
+        if (rejectServerAccessForSelfSignup(config, ctx, res)) return;
 
         const job = enqueueJob(config, ctx);
         if (ctx) {
@@ -1266,6 +1461,7 @@ const server = createServer(
       }
       // Same safety gate as runs — discovery also spawns the stdio process.
       if (rejectMcpStdioIfDisabled(config, res)) return;
+      if (rejectServerAccessForSelfSignup(config, ctx, res)) return;
 
       try {
         // Bound the attempt so an unreachable/hung server can't hold the socket open.
@@ -1311,7 +1507,7 @@ const server = createServer(
         return;
       }
 
-      const job = jobs.get(id);
+      const job = getJobForCtx(id, ctx);
 
       // Return progress since a given offset (for polling)
       const since = parseInt(url.searchParams.get("since") || "0", 10);
@@ -1375,7 +1571,7 @@ const server = createServer(
       }
 
       if (reportFilename) {
-        const loaded = await loadReportRecord(reportFilename, ctx?.tenantId);
+        const loaded = await loadReportRecord(reportFilename, ctx?.tenantId, !isSelfSignup(ctx));
         if (loaded) {
           const report = normalizeReportSteps(loaded.report) as any;
           const rounds = Array.isArray(report.rounds) ? report.rounds : [];
@@ -1439,14 +1635,15 @@ const server = createServer(
         return;
       }
 
-      const job = jobs.get(id);
+      const job = getJobForCtx(id, ctx);
       let found = !!job;
 
-      // In-memory job: mutate its config and persist the saved-config file.
+      // In-memory job: mutate its config and persist the saved-config file
+      // (file store only without a DB; it has no tenant).
       if (job) {
         job.config.name = name || undefined;
-        saveRunConfig(id, job.config);
-      } else {
+        if (!isDbConfigured()) saveRunConfig(id, job.config);
+      } else if (!isDbConfigured()) {
         // Historical run: update the saved config file if present.
         const cfg = await loadRunConfig(id, ctx?.tenantId);
         if (cfg) {
@@ -1487,7 +1684,7 @@ const server = createServer(
     if (url.pathname.startsWith("/api/run/") && req.method === "DELETE") {
       const id = url.pathname.slice("/api/run/".length);
       const purge = url.searchParams.get("purge") === "1";
-      const job = jobs.get(id);
+      const job = getJobForCtx(id, ctx);
 
       // Purge: fully remove the run (abort if active, drop from memory + config)
       if (purge) {
@@ -1500,7 +1697,7 @@ const server = createServer(
           jobs.delete(id);
         }
         cancelledRunIds.delete(id);
-        deleteRunConfig(id);
+        if (!isDbConfigured()) deleteRunConfig(id);
         if (isDbConfigured() && ctx?.tenantId) {
           query("DELETE FROM runs WHERE id=$1 AND tenant_id=$2", [
             id,
@@ -1553,8 +1750,8 @@ const server = createServer(
       if (!job.finishedAt) job.finishedAt = new Date().toISOString();
       console.log(`  [CANCEL] _cancelled=${job._cancelled}, cancelledRunIds.has=${cancelledRunIds.has(id)}, isDb=${isDbConfigured()}, tenantId=${job.tenantId}`);
       if (isDbConfigured() && job.tenantId) {
-        query("UPDATE runs SET status=$1, finished_at=$2, error=$3 WHERE id=$4", [
-          "cancelled", job.finishedAt, job.error, job.id,
+        query("UPDATE runs SET status=$1, finished_at=$2, error=$3 WHERE id=$4 AND tenant_id=$5", [
+          "cancelled", job.finishedAt, job.error, job.id, job.tenantId,
         ]).then(() => {
           console.log(`  [CANCEL] DB updated successfully for ${id}`);
         }).catch((err: unknown) => {
@@ -1572,6 +1769,7 @@ const server = createServer(
     if (url.pathname === "/api/runs" && req.method === "GET") {
       const inMemoryIds = new Set<string>();
       const runs = [...jobs.values()]
+        .filter((j) => canAccessJob(j, ctx))
         .sort(
           (a, b) =>
             new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
@@ -1653,7 +1851,9 @@ const server = createServer(
     // API: list report filenames (legacy)
     if (url.pathname === "/api/reports") {
       try {
-        const files = listFileReportMetas().map((meta) => meta.filename);
+        const files = isSelfSignup(ctx)
+          ? []
+          : listFileReportMetas().map((meta) => meta.filename);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(files));
       } catch {
@@ -1666,7 +1866,7 @@ const server = createServer(
     // API: eval runs grouped by dataset (score over time / regression tracking)
     if (url.pathname === "/api/eval-runs" && req.method === "GET") {
       try {
-        const reports = listFileReportMetas()
+        const reports = (isSelfSignup(ctx) ? [] : listFileReportMetas())
           .map((meta) => {
             try {
               const raw = readFileSync(
@@ -1985,6 +2185,7 @@ const server = createServer(
         }
         // Never run an MCP stdio target on a shared instance unless enabled.
         if (rejectMcpStdioIfDisabled(config, res)) return;
+        if (rejectServerAccessForSelfSignup(config, ctx, res)) return;
         // Path-contained read of the dataset (data/datasets/*.json), mirroring
         // the row viewer.
         const rel = String(body.dataset ?? "");
@@ -2266,7 +2467,11 @@ const server = createServer(
       try {
         const repoRoot = join(import.meta.dirname, "..");
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ profiles: listProfiles(repoRoot) }));
+        res.end(
+          JSON.stringify({
+            profiles: isSelfSignup(ctx) ? [] : listProfiles(repoRoot),
+          }),
+        );
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: formatErrorDetails(err) }));
@@ -2276,6 +2481,11 @@ const server = createServer(
 
     // API: save a reusable app profile.
     if (url.pathname === "/api/datasets/profiles" && req.method === "POST") {
+      if (isSelfSignup(ctx)) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Saving profiles is not available for this account" }));
+        return;
+      }
       try {
         const repoRoot = join(import.meta.dirname, "..");
         const body = JSON.parse(await readBody(req));
@@ -2553,6 +2763,21 @@ const server = createServer(
         // dataset is tailored to its tool graph / roles / MCP surface.
         let seeds: DatasetSeeds | undefined;
         let seedInfo: { roles: number; surfaces: number } | undefined;
+        if (
+          isSelfSignup(ctx) &&
+          (body.profileId ||
+            body.seedConfigPath ||
+            presetAbs.startsWith(join(repoRoot, "configs", "profiles")))
+        ) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error:
+                "Saved profiles and seed configs are not available for this account; pass an inline profile instead",
+            }),
+          );
+          return;
+        }
         if (body.seedConfigPath) {
           const seedCfgAbs = resolvePath(repoRoot, body.seedConfigPath);
           if (
@@ -2817,7 +3042,7 @@ const server = createServer(
           }));
           const merged = [...dbItems];
           const seen = new Set(dbItems.map((item) => item.filename));
-          for (const meta of listFileReportMetas()) {
+          for (const meta of isSelfSignup(ctx) ? [] : listFileReportMetas()) {
             if (!matchesReportSearch(meta, search) || seen.has(meta.filename)) {
               continue;
             }
@@ -2901,7 +3126,7 @@ const server = createServer(
       }
       try {
         // Load report from DB or file
-        const loaded = await loadReportRecord(filename, ctx?.tenantId);
+        const loaded = await loadReportRecord(filename, ctx?.tenantId, !isSelfSignup(ctx));
         if (!loaded) {
           res.writeHead(404);
           res.end("Not found");
@@ -3146,7 +3371,7 @@ const server = createServer(
           return;
         }
 
-        const loaded = await loadReportRecord(filename, ctx?.tenantId);
+        const loaded = await loadReportRecord(filename, ctx?.tenantId, !isSelfSignup(ctx));
         if (!loaded) {
           res.writeHead(404);
           res.end("Not found");
@@ -3242,7 +3467,7 @@ const server = createServer(
       let fileMetas: GuardrailReportMeta[] = [];
       try {
         const dbFilenames = new Set(dbMetas.map((m) => m.filename));
-        const files = readdirSync(LITELLM_REPORT_DIR)
+        const files = (isSelfSignup(ctx) ? [] : readdirSync(LITELLM_REPORT_DIR))
           .filter((f) => f.endsWith(".json") && !dbFilenames.has(f))
           .sort()
           .reverse();
@@ -3314,6 +3539,7 @@ const server = createServer(
       }
       // File fallback
       try {
+        if (isSelfSignup(ctx)) throw new Error("no shared disk for self-signup");
         const raw = readFileSync(join(LITELLM_REPORT_DIR, filename), "utf-8");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(raw);
@@ -3339,17 +3565,19 @@ const server = createServer(
           );
           return;
         }
-        // Always write to disk as fallback
-        if (!existsSync(LITELLM_REPORT_DIR)) {
-          mkdirSync(LITELLM_REPORT_DIR, { recursive: true });
-        }
         const ts =
           new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19) + "Z";
         const filename = `litellm-guardrails-${ts}.json`;
-        writeFileSync(
-          join(LITELLM_REPORT_DIR, filename),
-          JSON.stringify(parsed, null, 2),
-        );
+        // Write to disk as fallback (shared, no tenant; never for self-signup accounts)
+        if (!isSelfSignup(ctx)) {
+          if (!existsSync(LITELLM_REPORT_DIR)) {
+            mkdirSync(LITELLM_REPORT_DIR, { recursive: true });
+          }
+          writeFileSync(
+            join(LITELLM_REPORT_DIR, filename),
+            JSON.stringify(parsed, null, 2),
+          );
+        }
         // Also store in DB if available
         if (isDbConfigured() && ctx?.tenantId) {
           try {
@@ -3395,7 +3623,7 @@ const server = createServer(
         res.end(JSON.stringify({ error: "Invalid report file" }));
         return;
       }
-      const loaded = await loadReportRecord(file, ctx?.tenantId);
+      const loaded = await loadReportRecord(file, ctx?.tenantId, !isSelfSignup(ctx));
       if (!loaded) {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Report not found" }));
@@ -3465,7 +3693,7 @@ const server = createServer(
         }
 
         // Load report from DB or file
-        const loadedReport = await loadReportRecord(reportFile, ctx?.tenantId);
+        const loadedReport = await loadReportRecord(reportFile, ctx?.tenantId, !isSelfSignup(ctx));
         if (!loadedReport) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Report not found" }));
@@ -3810,6 +4038,7 @@ Be specific and factual. Reference real incidents and realistic financial figure
         const files = existsSync(policyDir)
           ? readdirSync(policyDir)
               .filter((f) => f.endsWith(".json"))
+              .filter((f) => !isSelfSignup(ctx) || BUILTIN_POLICIES.has(f))
               .sort()
           : [];
         const policies = files.map((f) => {
@@ -3838,6 +4067,11 @@ Be specific and factual. Reference real incidents and realistic financial figure
 
     // API: upload a custom policy file
     if (url.pathname === "/api/policy-upload" && req.method === "POST") {
+      if (isSelfSignup(ctx)) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Uploading policies is not available for this account" }));
+        return;
+      }
       try {
         const body = JSON.parse(await readBody(req));
         if (!body.name || !body.policy) {
