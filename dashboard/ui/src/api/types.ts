@@ -3,6 +3,7 @@ export interface AuthConfig {
   mode: "none" | "simple" | "dev" | "oidc";
   clerkPublishableKey?: string | null;
   hcaptchaSiteKey?: string | null;
+  signupEnabled?: boolean;
 }
 
 export interface AuthUser {

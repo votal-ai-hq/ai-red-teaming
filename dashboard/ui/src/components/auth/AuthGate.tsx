@@ -28,8 +28,12 @@ export function AuthGate({ children }: AuthGateProps) {
     return <>{children}</>;
   }
 
-  // Simple auth - show login if no session
-  if (authMode === "simple" && !user && !token) {
+  // Simple auth - show login if no session, or the set-password page from an
+  // emailed sign-up / reset link (even when already signed in)
+  if (
+    authMode === "simple" &&
+    ((!user && !token) || window.location.hash.startsWith("#/set-password"))
+  ) {
     return <LoginForm />;
   }
 

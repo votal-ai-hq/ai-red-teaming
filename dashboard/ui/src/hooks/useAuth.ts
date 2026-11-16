@@ -3,8 +3,15 @@ import { useAuthStore } from "@/stores/authStore";
 import * as authApi from "@/api/auth";
 
 export function useAuthInit() {
-  const { setAuthMode, setUser, setToken, setHcaptchaSiteKey, setClerkPublishableKey, setInitialized } =
-    useAuthStore();
+  const {
+    setAuthMode,
+    setUser,
+    setToken,
+    setHcaptchaSiteKey,
+    setClerkPublishableKey,
+    setSignupEnabled,
+    setInitialized,
+  } = useAuthStore();
 
   useEffect(() => {
     let cancelled = false;
@@ -17,6 +24,7 @@ export function useAuthInit() {
         setAuthMode(config.mode);
         if (config.hcaptchaSiteKey) setHcaptchaSiteKey(config.hcaptchaSiteKey);
         if (config.clerkPublishableKey) setClerkPublishableKey(config.clerkPublishableKey as string);
+        setSignupEnabled(!!config.signupEnabled);
 
         if (config.mode === "none" || config.mode === "dev") {
           setInitialized(true);
@@ -44,5 +52,13 @@ export function useAuthInit() {
 
     init();
     return () => { cancelled = true; };
-  }, [setAuthMode, setUser, setToken, setHcaptchaSiteKey, setClerkPublishableKey, setInitialized]);
+  }, [
+    setAuthMode,
+    setUser,
+    setToken,
+    setHcaptchaSiteKey,
+    setClerkPublishableKey,
+    setSignupEnabled,
+    setInitialized,
+  ]);
 }

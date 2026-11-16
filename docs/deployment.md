@@ -132,7 +132,8 @@ oc rollout restart deployment/wb-red-team
 | `CODEBASE_REPO_TOKEN`      | No                | Git token for private repo white-box scanning    |
 | `DATABASE_URL`             | No                | Postgres connection. Enables enterprise features |
 | `MASTER_ENCRYPTION_KEY`    | With DB           | 64 hex chars. Encrypts report data at rest       |
-| `AUTH_MODE`                | No                | `dev` = no login required. Omit for OIDC auth    |
+| `AUTH_MODE`                | No                | `dev` = no login required. `simple` = cookie login. Omit for OIDC auth |
+| `SIGNUP_ENABLED`           | No                | `true` = self-service email sign-up ([details](self-signup.md)) |
 | `CLERK_PUBLISHABLE_KEY`    | No                | Clerk publishable key for browser SSO            |
 | `MAX_CONCURRENT_RUNS`      | No                | Max parallel scans (default: 100)                |
 

@@ -22,6 +22,8 @@ export interface RequestContext {
   userId: string;
   role: Role;
   ip: string;
+  /** Account created through open email sign-up: untrusted, own tenant. */
+  selfSignup?: boolean;
 }
 
 type Handler = (
@@ -121,7 +123,10 @@ async function handleRequest(
       url.pathname === "/api/reference" ||
       url.pathname === "/api/auth/login" ||
       url.pathname === "/api/auth/logout" ||
-      url.pathname === "/api/auth/me"
+      url.pathname === "/api/auth/me" ||
+      url.pathname === "/api/auth/signup" ||
+      url.pathname === "/api/auth/forgot-password" ||
+      url.pathname === "/api/auth/set-password"
     ) {
       return handler(req, res, null);
     }
@@ -179,6 +184,7 @@ async function handleRequest(
       userId: authCtx.userId,
       role: authCtx.role,
       ip: req.socket.remoteAddress ?? "",
+      selfSignup: authCtx.selfSignup,
     };
 
     return handler(req, res, ctx);

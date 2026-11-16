@@ -14,6 +14,8 @@ export interface AuthContext {
   tenantId: string;
   role: Role;
   userId: string;
+  /** Account created through open email sign-up (lib/auth-signup.ts). */
+  selfSignup?: boolean;
 }
 
 // Cached JWKS per issuer URL

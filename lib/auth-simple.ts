@@ -3,6 +3,11 @@ import bcrypt from "bcryptjs";
 import { queryWithRetry, isDbConfigured } from "./db.js";
 import { generateTenantKey } from "./encryption.js";
 import type { AuthContext } from "./auth.js";
+import {
+  getAccountById,
+  verifyAccountLogin,
+  type Account,
+} from "./auth-signup.js";
 import type { Role } from "./rbac.js";
 
 interface SimpleAuthUser {
@@ -22,6 +27,13 @@ interface SessionPayload {
   nbf: number;
   iss: string;
   aud: string;
+  /** Set for self-signup accounts (lib/auth-signup.ts); absent for env-configured users. */
+  kind?: "account";
+  aid?: string;
+  email?: string;
+  name?: string;
+  /** The account's password_changed_at (ms) when the session was issued. */
+  pwv?: number;
 }
 
 export interface SimpleAuthUserInfo {
@@ -149,7 +161,16 @@ function parseSimpleAuthUsers(): SimpleAuthUser[] {
   ];
 }
 
+function hasEnvUsers(): boolean {
+  return !!(
+    process.env.SIMPLE_AUTH_USERS ||
+    (process.env.SIMPLE_AUTH_USERNAME && process.env.SIMPLE_AUTH_PASSWORD)
+  );
+}
+
 function findSimpleAuthUser(username: string): SimpleAuthUser | undefined {
+  // With self-signup accounts in the DB, env-configured users are optional.
+  if (!hasEnvUsers() && isDbConfigured()) return undefined;
   return parseSimpleAuthUsers().find((user) => user.username === username);
 }
 
@@ -289,8 +310,15 @@ export async function loginSimpleUser(
 ): Promise<{ auth: AuthContext; user: SimpleAuthUserInfo; token: string }> {
   const user = findSimpleAuthUser(username);
   if (!user) {
-    // Constant-time: always run a bcrypt compare even if user not found
-    await bcrypt.compare(password, "$2a$10$invalidhashplaceholderXXXXXXXXXXXXXXXXXXXXXXX");
+    if (isDbConfigured()) {
+      // Self-signup accounts sign in with their email as the username.
+      // verifyAccountLogin runs a full bcrypt compare even when no account matches.
+      const account = await verifyAccountLogin(username, password);
+      if (account) return issueAccountSession(account);
+    } else {
+      // Constant-time: always run a bcrypt compare even if user not found
+      await bcrypt.compare(password, "$2a$10$invalidhashplaceholderXXXXXXXXXXXXXXXXXXXXXXX");
+    }
     throw new Error("Invalid username or password");
   }
 
@@ -328,6 +356,47 @@ export async function loginSimpleUser(
   };
 }
 
+function accountAuthContext(account: Account): AuthContext {
+  return {
+    sub: `account:${account.id}`,
+    email: account.email,
+    tenantId: account.tenantId,
+    role: "admin",
+    userId: account.userId,
+    selfSignup: true,
+  };
+}
+
+/** Issue a session for a self-signup account (after login or setting a password). */
+export function issueAccountSession(account: Account): {
+  auth: AuthContext;
+  user: SimpleAuthUserInfo;
+  token: string;
+} {
+  const now = Math.floor(Date.now() / 1000);
+  const name = account.name || account.email;
+  const token = serializeSession({
+    username: account.email,
+    role: "admin",
+    sid: randomUUID(),
+    exp: now + getSessionTtlSeconds(),
+    iat: now,
+    nbf: now,
+    iss: "red-team-dashboard",
+    aud: "red-team-session",
+    kind: "account",
+    aid: account.id,
+    email: account.email,
+    name,
+    pwv: account.passwordChangedAt,
+  });
+  return {
+    auth: accountAuthContext(account),
+    token,
+    user: { username: account.email, role: "admin", email: account.email, name },
+  };
+}
+
 export async function validateSimpleSession(
   cookieHeader: string | undefined,
 ): Promise<AuthContext> {
@@ -339,6 +408,17 @@ export async function validateSimpleSession(
   }
 
   const payload = deserializeSession(token);
+  if (payload.kind === "account") {
+    if (!payload.aid || !isDbConfigured()) throw new Error("Invalid session");
+    const account = await getAccountById(payload.aid);
+    if (!account) {
+      throw new Error("User no longer exists");
+    }
+    if (account.passwordChangedAt !== payload.pwv) {
+      throw new Error("Password changed — please log in again");
+    }
+    return accountAuthContext(account);
+  }
   const user = findSimpleAuthUser(payload.username);
   if (!user) {
     throw new Error("User no longer exists");
@@ -379,6 +459,16 @@ export async function getSimpleSessionUser(
   }
 
   const payload = deserializeSession(token); // verifies signature + expiry, no DB
+  if (payload.kind === "account") {
+    // Everything /me needs is in the signed token. Revocation (deleted account,
+    // changed password) is enforced by validateSimpleSession on every API call.
+    return {
+      username: payload.username,
+      role: "admin",
+      email: payload.email,
+      name: payload.name || payload.username,
+    };
+  }
   const user = findSimpleAuthUser(payload.username);
   if (!user) {
     throw new Error("User no longer exists");
