@@ -5,7 +5,12 @@
  *
  * See docs/specs/nemo-data-designer-datasets.md — quality datasets.
  */
-import { resolveQualityPool, defaultMetrics } from "./quality-set.js";
+import {
+  defaultMetrics,
+  encodeQualityPair,
+  resolveMcpQualityPairs,
+  resolveQualityPool,
+} from "./quality-set.js";
 import type {
   DataDesignerConfig,
   SamplerColumn,
@@ -63,13 +68,14 @@ function inputTemplate(
   context?: string,
   instructions?: string,
   examples?: string[],
+  paired = false,
 ): string {
   return [
     "You are authoring a FUNCTIONAL evaluation case for an AI agent — a",
     "legitimate task the agent should handle correctly (not an attack).",
     contextPreamble(context),
-    "Task type: {{task}}",
-    "Graded on metric: {{metric}}",
+    paired ? "Task and metric (task::metric): {{taskMetric}}" : "Task type: {{task}}",
+    paired ? "Use both parts of that pair exactly." : "Graded on metric: {{metric}}",
     "Acting as: {{role}}",
     "Available surface: {{surface}}",
     instructionsBlock(instructions),
@@ -84,14 +90,15 @@ function multiTurnInputTemplate(
   context?: string,
   instructions?: string,
   examples?: string[],
+  paired = false,
 ): string {
   return [
     "You are authoring a MULTI-TURN FUNCTIONAL evaluation case for an AI agent —",
     "a legitimate {{turns}}-message task conversation (not an attack) where each",
     "turn builds on the previous ones.",
     contextPreamble(context),
-    "Task type: {{task}}",
-    "Graded on metric: {{metric}}",
+    paired ? "Task and metric (task::metric): {{taskMetric}}" : "Task type: {{task}}",
+    paired ? "Use both parts of that pair exactly." : "Graded on metric: {{metric}}",
     "Acting as: {{role}}",
     "Available surface: {{surface}}",
     instructionsBlock(instructions),
@@ -113,12 +120,12 @@ function multiTurnInputTemplate(
   ].join("\n");
 }
 
-function referenceTemplate(context?: string): string {
+function referenceTemplate(context?: string, paired = false): string {
   return [
     "Given this functional eval case, produce the grading reference.",
     contextPreamble(context),
-    "Task type: {{task}}",
-    "Metric: {{metric}}",
+    paired ? "Task and metric (task::metric): {{taskMetric}}" : "Task type: {{task}}",
+    paired ? "Use both parts of that pair exactly." : "Metric: {{metric}}",
     "User request: {{input}}",
     "",
     "Return: reference = the ideal correct answer (concise); expectedTools = a",
@@ -140,6 +147,14 @@ export function buildQualityDataDesignerConfig(
     allowCustom: opts?.allowCustomTasks,
   });
   const metrics = preset.metrics ?? defaultMetrics(preset.family);
+  const mcpPairs =
+    preset.family === "mcp"
+      ? resolveMcpQualityPairs(
+          tasks,
+          metrics,
+          Boolean(preset.tasks?.length),
+        )
+      : [];
   const roles = seeds?.roles ?? preset.roles ?? DEFAULT_ROLES;
   const surfaces = seeds?.surfaces ?? preset.surfaces ?? DEFAULT_SURFACES;
   const model = preset.generationModel ?? DEFAULT_MODEL;
@@ -148,9 +163,20 @@ export function buildQualityDataDesignerConfig(
   const count = preset.count ?? 300;
   const multiTurn = preset.turnMode === "multi";
 
+  const taskSamplers: SamplerColumn[] =
+    preset.family === "mcp"
+      ? [{
+          type: "sampler",
+          name: "taskMetric",
+          samplerType: "category",
+          values: mcpPairs.map(encodeQualityPair),
+        }]
+      : [
+          { type: "sampler", name: "task", samplerType: "category", values: tasks },
+          { type: "sampler", name: "metric", samplerType: "category", values: metrics },
+        ];
   const samplers: SamplerColumn[] = [
-    { type: "sampler", name: "task", samplerType: "category", values: tasks },
-    { type: "sampler", name: "metric", samplerType: "category", values: metrics },
+    ...taskSamplers,
     { type: "sampler", name: "role", samplerType: "category", values: roles },
     { type: "sampler", name: "surface", samplerType: "category", values: surfaces },
   ];
@@ -171,15 +197,25 @@ export function buildQualityDataDesignerConfig(
     name: "input",
     modelAlias,
     prompt: multiTurn
-      ? multiTurnInputTemplate(seeds?.context, preset.customInstructions, preset.examples)
-      : inputTemplate(seeds?.context, preset.customInstructions, preset.examples),
+      ? multiTurnInputTemplate(
+          seeds?.context,
+          preset.customInstructions,
+          preset.examples,
+          preset.family === "mcp",
+        )
+      : inputTemplate(
+          seeds?.context,
+          preset.customInstructions,
+          preset.examples,
+          preset.family === "mcp",
+        ),
   };
 
   const refCol: LlmStructuredColumn = {
     type: "llm-structured",
     name: "grading",
     modelAlias,
-    prompt: referenceTemplate(seeds?.context),
+    prompt: referenceTemplate(seeds?.context, preset.family === "mcp"),
     outputFields: [
       { name: "reference", description: "the ideal correct answer" },
       { name: "expectedTools", description: "JSON array of tool names a correct agent would call" },

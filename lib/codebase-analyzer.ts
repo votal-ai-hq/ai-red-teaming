@@ -566,7 +566,7 @@ function mergeAnalyses(
 const FULL_ANALYSIS_PROMPT = `You are a security analyst. Analyze the following source code for an agentic AI application. Extract structured information about its security surface.
 
 Return a JSON object with these fields:
-- tools: array of { name, description, parameters } for each tool the agent can invoke
+- tools: array of { name, description, parameters } for each tool the agent can invoke; parameters MUST be a JSON-serialized input JSON Schema object, including required fields and additionalProperties when known
 - roles: array of { name, permissions[] } for each user role
 - guardrailPatterns: array of { type ("input"|"output"), patterns[] } for regex/string patterns used in guardrails
 - sensitiveData: array of { type, location, example } for secrets, PII, or confidential data found in source
@@ -588,7 +588,7 @@ Previously analyzed files already found these items — do NOT repeat them:
 ${JSON.stringify(alreadyFound, null, 2)}
 
 Extract ONLY NEW findings from the source code below. Return a JSON object with the same fields:
-- tools, roles, guardrailPatterns, sensitiveData, authMechanisms, knownWeaknesses, systemPromptHints
+- tools (parameters must be a JSON-serialized input JSON Schema object), roles, guardrailPatterns, sensitiveData, authMechanisms, knownWeaknesses, systemPromptHints
 
 Only include items NOT already found above. If nothing new is found, return empty arrays.
 Respond with ONLY the JSON object, no markdown fences.`;

@@ -122,6 +122,11 @@ describe("profileToSeeds / profileToContext", () => {
       'schema={"type":"object","properties":{"amount":{"type":"number"}}',
     );
     expect(seeds.context).toContain("retail banking assistant");
+    expect(seeds.mcpContract?.tools).toEqual([
+      expect.objectContaining({ name: "wireTransfer", inputSchema: profile.tools?.[1].inputSchema }),
+      expect.objectContaining({ name: "getBalance" }),
+    ]);
+    expect(seeds.mcpContract?.roles).toEqual(["customer", "teller"]);
   });
 
   it("context block includes rules, system prompt, and sensitive tools", () => {

@@ -17,6 +17,7 @@
  */
 import { resolveCategoryPool, allStrategySlugs } from "./category-set.js";
 import { executionForMcpSurface } from "./mcp-execution.js";
+import { resolveDirectMcpCategories } from "./mcp-contract.js";
 import type { DatasetPreset, DatasetSeeds, Severity } from "./types.js";
 
 const DEFAULT_SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
@@ -230,7 +231,17 @@ export function buildDataDesignerConfig(
   preset: DatasetPreset,
   seeds?: DatasetSeeds,
 ): DataDesignerConfig {
-  const categories = resolveCategoryPool(preset.family, preset.categories);
+  const resolvedCategories = resolveCategoryPool(
+    preset.family,
+    preset.categories,
+  );
+  const categories =
+    preset.family === "mcp"
+      ? resolveDirectMcpCategories(
+          resolvedCategories,
+          Boolean(preset.categories?.length),
+        )
+      : resolvedCategories;
   const severities = preset.severities ?? DEFAULT_SEVERITIES;
   // Seeds represent the *actual* target (from --seed / --from-analysis) and take
   // priority over the preset's generic placeholders, which are the from-scratch
